@@ -1,0 +1,15 @@
+{
+  "name": "virtual-private-network",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "sing-box (VLESS+REALITY) backend egressing through a Tailscale exit node, with a minimal subscription service.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "start": "node sub/server.js",
+    "links": "node sub/generate.js"
+  }
+}
