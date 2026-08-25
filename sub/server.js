@@ -6,6 +6,7 @@ import {
   buildClashConfig,
   buildShareLinks,
 } from './generate.js';
+import { buildPage } from './page.js';
 
 const token = process.env.SUB_TOKEN;
 if (!token) {
@@ -33,12 +34,18 @@ const handlers = {
     contentType: 'text/plain; charset=utf-8',
     body: () => buildShareLinks(cfg).join('\n') + '\n',
   },
+  page: {
+    contentType: 'text/html; charset=utf-8',
+    body: (host) => buildPage(cfg, `http://${host}/${token}`),
+  },
 };
 
-function sniffFormat(ua) {
-  const s = String(ua ?? '').toLowerCase();
-  if (s.includes('sing-box') || s.includes('singbox')) return 'singbox';
-  if (s.includes('clash')) return 'clash';
+function sniffFormat(req) {
+  const accept = String(req.headers['accept'] ?? '').toLowerCase();
+  if (accept.includes('text/html')) return 'page';
+  const ua = String(req.headers['user-agent'] ?? '').toLowerCase();
+  if (ua.includes('sing-box') || ua.includes('singbox')) return 'singbox';
+  if (ua.includes('clash')) return 'clash';
   return 'mixed';
 }
 
@@ -53,12 +60,12 @@ const server = http.createServer((req, res) => {
   const parts = new URL(req.url ?? '/', 'http://localhost').pathname.split('/').filter(Boolean);
   if (parts.length < 1 || parts.length > 2 || parts[0] !== token) return notFound();
 
-  const format = parts[1] ?? sniffFormat(req.headers['user-agent']);
+  const format = parts[1] ?? sniffFormat(req);
   const handler = handlers[format];
   if (!handler) return notFound();
 
   res.writeHead(200, { 'content-type': handler.contentType });
-  res.end(handler.body());
+  res.end(handler.body(req.headers.host));
 });
 
 server.listen(listenPort, () => {

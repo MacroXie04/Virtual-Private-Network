@@ -34,6 +34,8 @@ sudo bash server/install.sh
 
 ## 订阅与客户端
 
+浏览器直接访问 `http://<VPS>:8080/<SUB_TOKEN>` 会看到网页界面：节点信息、分享链接（含二维码）、各格式订阅地址一键复制、配置文件下载。
+
 | 格式 | 地址 |
 | --- | --- |
 | 通用 mixed（base64 链接） | `http://<VPS>:8080/<SUB_TOKEN>` |
@@ -41,7 +43,7 @@ sudo bash server/install.sh
 | Clash Meta (mihomo) | `http://<VPS>:8080/<SUB_TOKEN>/clash` |
 | 纯文本分享链接 | `http://<VPS>:8080/<SUB_TOKEN>/links` |
 
-不带后缀时会按 User-Agent 嗅探（sing-box / Clash 自动给对应格式，其余给 mixed）。v2rayN、Nekoray、Clash Verge (Meta 内核)、sing-box 官方客户端均支持 VLESS+REALITY。
+不带后缀时按请求头嗅探：浏览器（Accept 含 text/html）给网页界面，sing-box / Clash 客户端自动给对应格式，其余给 mixed。v2rayN、Nekoray、Clash Verge (Meta 内核)、sing-box 官方客户端均支持 VLESS+REALITY。
 
 不想暴露 HTTP 订阅端口时，可在 VPS 上本地生成再手动导入：
 
