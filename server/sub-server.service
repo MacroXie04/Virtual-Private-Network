@@ -7,8 +7,8 @@ Wants=network-online.target
 EnvironmentFile=/etc/vpn-sub.env
 ExecStart=__NODE__ /opt/vpn-sub/server.js
 Restart=on-failure
-DynamicUser=true
-NoNewPrivileges=true
+User=vpn-sub
+Group=vpn-sub
 ProtectSystem=strict
 ProtectHome=true
 

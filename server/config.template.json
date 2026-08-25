@@ -31,7 +31,7 @@
       }
     }
   ],
-  "outbounds": [
+  "endpoints": [
     {
       "type": "tailscale",
       "tag": "ts-out",
@@ -40,7 +40,9 @@
       "hostname": "proxy-vps",
       "exit_node": "${EXIT_NODE}",
       "ephemeral": false
-    },
+    }
+  ],
+  "outbounds": [
     {
       "type": "direct",
       "tag": "direct"

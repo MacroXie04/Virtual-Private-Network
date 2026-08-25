@@ -1,0 +1,23 @@
+services:
+  vpn:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: vpn-singbox:latest
+    container_name: vpn-singbox
+    restart: unless-stopped
+    ports:
+      - "443:443/tcp"
+      - "8080:8080/tcp"
+    environment:
+      TS_AUTH_KEY: ${TS_AUTH_KEY:?请在 .env 中设置 TS_AUTH_KEY}
+      EXIT_NODE: ${EXIT_NODE:?请在 .env 中设置 EXIT_NODE}
+      VPS_HOST: ${VPS_HOST:?请在 .env 中设置 VPS_HOST}
+      SERVER_NAME: ${SERVER_NAME:-www.microsoft.com}
+      NODE_NAME: ${NODE_NAME:-vps-reality}
+      TS_API_KEY: ${TS_API_KEY:-}
+    volumes:
+      - vpn-data:/data
+
+volumes:
+  vpn-data:

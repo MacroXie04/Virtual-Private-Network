@@ -11,7 +11,8 @@ function esc(s) {
 }
 
 // base: 订阅服务的对外基地址，如 http://203.0.113.10:8080/<token>
-export function buildPage(cfg, base) {
+// tsState: { service, exitNode, hasAuthKey, maskedAuthKey, hostname, exitNodes, logs, flash, error }
+export function buildPage(cfg, base, tsState = {}) {
   const link = buildShareLinks(cfg)[0];
   const subs = [
     ['通用 mixed', `${base}`],
@@ -35,6 +36,28 @@ export function buildPage(cfg, base) {
         <code class="sub-url">${esc(url)}</code>
         <button class="copy" data-copy="${esc(url)}">复制</button>
       </div>`).join('');
+
+  const flash = tsState.flash
+    ? (tsState.flash === 'ok'
+      ? '<p class="flash ok">已保存，sing-box 已重启生效。</p>'
+      : `<p class="flash err">操作失败：${esc(tsState.flash.replace(/^err:/, ''))}</p>`)
+    : '';
+
+  const tsRows = [
+    ['sing-box 服务', tsState.service],
+    ['当前 Exit Node', tsState.exitNode],
+    ['Auth Key', tsState.hasAuthKey ? tsState.maskedAuthKey : '未配置'],
+    ['tsnet 主机名', tsState.hostname],
+  ].filter(([, v]) => v)
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`)
+    .join('\n        ');
+
+  const exitNodeOptions = (tsState.exitNodes ?? [])
+    .map((n) => `<option value="${esc(n.ip)}" label="${esc(n.name)}"></option>`)
+    .join('');
+
+  const tsError = tsState.error ? `<p class="flash err">${esc(tsState.error)}</p>` : '';
+  const tsLogs = tsState.logs ? `<pre class="logs">${esc(tsState.logs)}</pre>` : '';
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -84,6 +107,20 @@ export function buildPage(cfg, base) {
   }
   .downloads a:hover { background: #1b2230; }
   .warn { color: #c9a35c; font-size: .8rem; margin-top: .75rem; }
+  .flash { border-radius: 8px; padding: .6rem .9rem; font-size: .85rem; margin: 0 0 1rem; }
+  .flash.ok { background: #16321f; border: 1px solid #2a5a3a; color: #7fd4a0; }
+  .flash.err { background: #3a1d1d; border: 1px solid #6b2f2f; color: #f0a0a0; }
+  .form-row { display: flex; gap: .6rem; align-items: center; margin: .6rem 0; flex-wrap: wrap; }
+  .form-row label { width: 6.5rem; color: #9aa0aa; font-size: .9rem; }
+  .form-row input {
+    flex: 1; min-width: 200px; background: #12141a; border: 1px solid #3a4150;
+    border-radius: 8px; color: #e6e6e6; padding: .45rem .9rem; font-size: .85rem;
+  }
+  .hint { color: #9aa0aa; font-size: .8rem; margin-left: .6rem; }
+  pre.logs {
+    background: #12141a; border-radius: 8px; padding: .75rem; font-size: .75rem;
+    max-height: 16rem; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  }
 </style>
 </head>
 <body>
@@ -104,6 +141,30 @@ export function buildPage(cfg, base) {
       <div class="link-text"><code>${esc(link)}</code></div>
     </div>
     <p><button class="copy" data-copy="${esc(link)}">复制链接</button></p>
+  </section>
+
+  <section class="card">
+    <h2>Tailscale 出口</h2>
+    ${flash}
+    ${tsError}
+    <table>
+        ${tsRows}
+    </table>
+    <form method="post" action="${esc(base)}/tailscale" style="margin-top:1rem">
+      <div class="form-row">
+        <label for="authKey">Auth Key</label>
+        <input type="password" id="authKey" name="authKey" placeholder="留空则不修改" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label for="exitNode">Exit Node</label>
+        <input id="exitNode" name="exitNode" list="exit-nodes" required
+               placeholder="100.x.x.x 或机器名" value="${esc(tsState.exitNode ?? '')}">
+        <datalist id="exit-nodes">${exitNodeOptions}</datalist>
+      </div>
+      <button type="submit">保存并重启 sing-box</button>
+      <span class="hint">保存后 sing-box 将重启，代理会中断数秒。</span>
+    </form>
+    ${tsLogs}
   </section>
 
   <section class="card">

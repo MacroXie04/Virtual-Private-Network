@@ -1,7 +1,8 @@
 node_modules/
 dist/
-.wrangler/ 
+.wrangler/
 .dev.vars
+.env
 *.log
 .DS_Store
 .tmp-test/

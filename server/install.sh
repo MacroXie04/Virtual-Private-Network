@@ -26,6 +26,7 @@ read -rp  "Exit Node 地址（100.x.x.x 或 tailnet 机器名）: " EXIT_NODE
 read -rp  "本机公网地址（IP 或域名，写入订阅链接）: " VPS_HOST
 read -rp  "REALITY 伪装域名 [www.microsoft.com]: " SERVER_NAME
 SERVER_NAME=${SERVER_NAME:-www.microsoft.com}
+read -rp  "Tailscale API access token（可选，用于 Web UI 下拉列出 Exit Node；留空则手输）: " TS_API_KEY
 [[ -n "$TS_AUTH_KEY" && -n "$EXIT_NODE" && -n "$VPS_HOST" ]] || { echo "参数不能为空" >&2; exit 1; }
 
 echo
@@ -37,6 +38,9 @@ REALITY_PRIVATE_KEY=$(awk '/PrivateKey/{print $2}' <<<"$KEYPAIR")
 REALITY_PUBLIC_KEY=$(awk '/PublicKey/{print $2}' <<<"$KEYPAIR")
 SUB_TOKEN=$(openssl rand -hex 16)
 
+echo "==> 创建 vpn-sub 系统用户"
+id -u vpn-sub >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin vpn-sub
+
 echo "==> 渲染 sing-box 配置"
 install -d -m 700 /var/lib/sing-box/tailscale
 sed -e "s|\${UUID}|${UUID}|g" \
@@ -46,12 +50,21 @@ sed -e "s|\${UUID}|${UUID}|g" \
     -e "s|\${TS_AUTH_KEY}|${TS_AUTH_KEY}|g" \
     -e "s|\${EXIT_NODE}|${EXIT_NODE}|g" \
     "$REPO_DIR/server/config.template.json" > /etc/sing-box/config.json
-chmod 600 /etc/sing-box/config.json
+chown root:vpn-sub /etc/sing-box/config.json
+chmod 640 /etc/sing-box/config.json
 sing-box check -c /etc/sing-box/config.json
 
 echo "==> 安装订阅服务"
 install -d /opt/vpn-sub
-install -m 644 "$REPO_DIR/sub/generate.js" "$REPO_DIR/sub/server.js" /opt/vpn-sub/
+install -m 644 "$REPO_DIR/sub/generate.js" "$REPO_DIR/sub/server.js" "$REPO_DIR/sub/tailscale.js" "$REPO_DIR/sub/page.js" /opt/vpn-sub/
+install -m 755 "$REPO_DIR/server/ts-ctl.sh" /opt/vpn-sub/ts-ctl.sh
+
+echo "==> 配置 sudoers（仅放行 ts-ctl.sh）"
+cat > /etc/sudoers.d/vpn-sub <<'EOF'
+vpn-sub ALL=(root) NOPASSWD: /opt/vpn-sub/ts-ctl.sh *
+EOF
+chmod 440 /etc/sudoers.d/vpn-sub
+visudo -cf /etc/sudoers.d/vpn-sub
 cat > /etc/vpn-sub.env <<EOF
 LISTEN_PORT=8080
 SUB_TOKEN=${SUB_TOKEN}
@@ -63,6 +76,9 @@ SERVER_NAME=${SERVER_NAME}
 REALITY_PUBLIC_KEY=${REALITY_PUBLIC_KEY}
 SHORT_ID=${SHORT_ID}
 EOF
+if [[ -n "$TS_API_KEY" ]]; then
+  echo "TS_API_KEY=${TS_API_KEY}" >> /etc/vpn-sub.env
+fi
 chmod 600 /etc/vpn-sub.env
 sed "s|__NODE__|$(command -v node)|" "$REPO_DIR/server/sub-server.service" > /etc/systemd/system/vpn-sub.service
 systemctl daemon-reload
