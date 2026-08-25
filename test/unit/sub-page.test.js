@@ -14,7 +14,7 @@ const cfg = {
 };
 const base = 'http://203.0.113.10:8080/TOKEN123';
 
-test('页面包含节点信息与分享链接', () => {
+test('page contains node info and share link', () => {
   const html = buildPage(cfg, base);
   assert.match(html, /^<!doctype html>/i);
   assert.ok(html.includes(cfg.uuid));
@@ -24,7 +24,7 @@ test('页面包含节点信息与分享链接', () => {
   assert.match(html, /<title>test-node<\/title>/);
 });
 
-test('页面包含三种订阅地址与下载入口', () => {
+test('page contains three subscription URLs and download links', () => {
   const html = buildPage(cfg, base);
   assert.ok(html.includes(`${base}/singbox`));
   assert.ok(html.includes(`${base}/clash`));
@@ -33,14 +33,14 @@ test('页面包含三种订阅地址与下载入口', () => {
   assert.match(html, /download="clash-config\.yaml"/);
 });
 
-test('页面正确转义 HTML 特殊字符', () => {
+test('page escapes HTML special characters', () => {
   const evil = { ...cfg, name: '<script>alert(1)</script>' };
   const html = buildPage(evil, base);
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));
 });
 
-test('Tailscale 卡片渲染状态、表单与 datalist', () => {
+test('Tailscale card renders status, form, and datalist', () => {
   const tsState = {
     service: 'active',
     exitNode: '100.64.0.1',
@@ -62,17 +62,17 @@ test('Tailscale 卡片渲染状态、表单与 datalist', () => {
   assert.ok(!html.includes('class="flash'));
 });
 
-test('Tailscale 卡片渲染成功与失败横幅，且错误信息被转义', () => {
+test('Tailscale card renders success and error banners, with the error message escaped', () => {
   const ok = buildPage(cfg, base, { flash: 'ok' });
-  assert.ok(ok.includes('已保存'));
+  assert.ok(ok.includes('Saved'));
 
   const err = buildPage(cfg, base, { flash: 'err:<b>bad</b>' });
   assert.ok(err.includes('&lt;b&gt;bad&lt;/b&gt;'));
   assert.ok(!err.includes('<b>bad</b>'));
 });
 
-test('Tailscale 卡片对空状态容错', () => {
+test('Tailscale card tolerates empty state', () => {
   const html = buildPage(cfg, base);
-  assert.ok(html.includes('Tailscale 出口'));
+  assert.ok(html.includes('Tailscale Exit'));
   assert.ok(!html.includes('<pre class="logs">'));
 });

@@ -10,21 +10,21 @@ function esc(s) {
   }[c]));
 }
 
-// base: 订阅服务的对外基地址，如 http://203.0.113.10:8080/<token>
+// base: public base URL of the subscription service, e.g. http://203.0.113.10:8080/<token>
 // tsState: { service, exitNode, hasAuthKey, maskedAuthKey, hostname, exitNodes, logs, flash, error }
 export function buildPage(cfg, base, tsState = {}) {
   const link = buildShareLinks(cfg)[0];
   const subs = [
-    ['通用 mixed', `${base}`],
+    ['Generic (mixed)', `${base}`],
     ['sing-box', `${base}/singbox`],
     ['Clash Meta', `${base}/clash`],
   ];
 
   const rows = [
-    ['地址', cfg.host],
-    ['端口', cfg.port],
+    ['Address', cfg.host],
+    ['Port', cfg.port],
     ['UUID', cfg.uuid],
-    ['协议', 'VLESS + REALITY (xtls-rprx-vision)'],
+    ['Protocol', 'VLESS + REALITY (xtls-rprx-vision)'],
     ['SNI', cfg.serverName],
     ['Public Key', cfg.publicKey],
     ['Short ID', cfg.shortId],
@@ -34,20 +34,20 @@ export function buildPage(cfg, base, tsState = {}) {
       <div class="sub-row">
         <span class="sub-label">${esc(label)}</span>
         <code class="sub-url">${esc(url)}</code>
-        <button class="copy" data-copy="${esc(url)}">复制</button>
+        <button class="copy" data-copy="${esc(url)}">Copy</button>
       </div>`).join('');
 
   const flash = tsState.flash
     ? (tsState.flash === 'ok'
-      ? '<p class="flash ok">已保存，sing-box 已重启生效。</p>'
-      : `<p class="flash err">操作失败：${esc(tsState.flash.replace(/^err:/, ''))}</p>`)
+      ? '<p class="flash ok">Saved. sing-box has been restarted.</p>'
+      : `<p class="flash err">Operation failed: ${esc(tsState.flash.replace(/^err:/, ''))}</p>`)
     : '';
 
   const tsRows = [
-    ['sing-box 服务', tsState.service],
-    ['当前 Exit Node', tsState.exitNode],
-    ['Auth Key', tsState.hasAuthKey ? tsState.maskedAuthKey : '未配置'],
-    ['tsnet 主机名', tsState.hostname],
+    ['sing-box Service', tsState.service],
+    ['Current Exit Node', tsState.exitNode],
+    ['Auth Key', tsState.hasAuthKey ? tsState.maskedAuthKey : 'Not configured'],
+    ['tsnet Hostname', tsState.hostname],
   ].filter(([, v]) => v)
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`)
     .join('\n        ');
@@ -60,7 +60,7 @@ export function buildPage(cfg, base, tsState = {}) {
   const tsLogs = tsState.logs ? `<pre class="logs">${esc(tsState.logs)}</pre>` : '';
 
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -128,23 +128,23 @@ export function buildPage(cfg, base, tsState = {}) {
   <h1>${esc(cfg.name)}</h1>
 
   <section class="card">
-    <h2>节点信息</h2>
+    <h2>Node Info</h2>
     <table>
         ${rows}
     </table>
   </section>
 
   <section class="card">
-    <h2>分享链接</h2>
+    <h2>Share Link</h2>
     <div class="qr-box">
       <div id="qr"></div>
       <div class="link-text"><code>${esc(link)}</code></div>
     </div>
-    <p><button class="copy" data-copy="${esc(link)}">复制链接</button></p>
+    <p><button class="copy" data-copy="${esc(link)}">Copy Link</button></p>
   </section>
 
   <section class="card">
-    <h2>Tailscale 出口</h2>
+    <h2>Tailscale Exit</h2>
     ${flash}
     ${tsError}
     <table>
@@ -153,28 +153,28 @@ export function buildPage(cfg, base, tsState = {}) {
     <form method="post" action="${esc(base)}/tailscale" style="margin-top:1rem">
       <div class="form-row">
         <label for="authKey">Auth Key</label>
-        <input type="password" id="authKey" name="authKey" placeholder="留空则不修改" autocomplete="off">
+        <input type="password" id="authKey" name="authKey" placeholder="Leave blank to keep unchanged" autocomplete="off">
       </div>
       <div class="form-row">
         <label for="exitNode">Exit Node</label>
         <input id="exitNode" name="exitNode" list="exit-nodes" required
-               placeholder="100.x.x.x 或机器名" value="${esc(tsState.exitNode ?? '')}">
+               placeholder="100.x.x.x or machine name" value="${esc(tsState.exitNode ?? '')}">
         <datalist id="exit-nodes">${exitNodeOptions}</datalist>
       </div>
-      <button type="submit">保存并重启 sing-box</button>
-      <span class="hint">保存后 sing-box 将重启，代理会中断数秒。</span>
+      <button type="submit">Save &amp; restart sing-box</button>
+      <span class="hint">Saving restarts sing-box; the proxy is interrupted for a few seconds.</span>
     </form>
     ${tsLogs}
   </section>
 
   <section class="card">
-    <h2>订阅地址</h2>
+    <h2>Subscription URLs</h2>
     ${subItems}
     <div class="downloads" style="margin-top:1rem">
-      <a href="${esc(base)}/singbox" download="singbox-config.json">下载 sing-box 配置</a>
-      <a href="${esc(base)}/clash" download="clash-config.yaml">下载 Clash Meta 配置</a>
+      <a href="${esc(base)}/singbox" download="singbox-config.json">Download sing-box config</a>
+      <a href="${esc(base)}/clash" download="clash-config.yaml">Download Clash Meta config</a>
     </div>
-    <p class="warn">本页面与订阅地址包含完整节点凭据，请勿公开分享。</p>
+    <p class="warn">This page and the subscription URLs contain full node credentials. Do not share them publicly.</p>
   </section>
 </main>
 <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
@@ -192,8 +192,8 @@ export function buildPage(cfg, base, tsState = {}) {
         document.execCommand('copy');
         ta.remove();
       }
-      btn.textContent = '已复制';
-      setTimeout(() => { btn.textContent = '复制'; }, 1500);
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
     });
   });
   if (window.QRCode) {

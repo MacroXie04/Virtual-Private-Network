@@ -1,15 +1,16 @@
 #!/bin/sh
-# 容器入口：首次启动生成凭据并渲染 sing-box 配置，然后以"重启循环"方式运行 sing-box，
-# 前台运行 Node 订阅/Web UI 服务。所有进程均为容器内 root，无需 sudo。
+# Container entrypoint: on first start, generate credentials and render the sing-box
+# config, then run sing-box in a "restart loop" and run the Node subscription/Web UI
+# service in the foreground. All processes run as root inside the container; no sudo needed.
 set -eu
 
 DATA=/data
 
-# 必填参数
+# Required parameters
 for v in TS_AUTH_KEY EXIT_NODE VPS_HOST; do
   eval "val=\${$v:-}"
   if [ -z "$val" ]; then
-    echo "缺少环境变量 $v" >&2
+    echo "Missing environment variable $v" >&2
     exit 1
   fi
 done
@@ -18,9 +19,9 @@ NODE_NAME=${NODE_NAME:-vps-reality}
 
 mkdir -p "$DATA/tailscale"
 
-# 首次启动：生成并持久化凭据（之后重启复用，客户端订阅不变）
+# First start: generate and persist credentials (reused across restarts so client subscriptions don't change)
 if [ ! -f "$DATA/env" ]; then
-  echo "首次启动：生成 UUID / REALITY 密钥对 / Short ID / SUB_TOKEN"
+  echo "First start: generating UUID / REALITY keypair / Short ID / SUB_TOKEN"
   UUID=$(sing-box generate uuid)
   SHORT_ID=$(node -e 'console.log(require("crypto").randomBytes(8).toString("hex"))')
   SUB_TOKEN=$(node -e 'console.log(require("crypto").randomBytes(16).toString("hex"))')
@@ -39,7 +40,8 @@ fi
 set -a; . "$DATA/env"; set +a
 export VPS_HOST SERVER_NAME NODE_NAME
 
-# 仅当配置不存在时渲染模板；之后以卷内配置为准（Web UI 对出口/auth key 的修改才不会被覆盖）
+# Render the template only when no config exists; afterwards the in-volume config is
+# authoritative (so Web UI changes to the exit node / auth key are not overwritten)
 if [ ! -f "$DATA/config.json" ]; then
   sed -e "s|\${UUID}|${UUID}|g" \
       -e "s|\${SERVER_NAME}|${SERVER_NAME}|g" \
@@ -53,15 +55,16 @@ if [ ! -f "$DATA/config.json" ]; then
 fi
 sing-box check -c "$DATA/config.json"
 
-# sing-box 重启循环：ts-ctl.sh apply 通过 pkill 触发重启
+# sing-box restart loop: ts-ctl.sh apply triggers a restart via pkill
 (
   while :; do
-    # 日志超 512KB 时截断保留末尾 1000 行（仅在重启间隙执行，tee 持有 fd 时不动它）
+    # Truncate the log to its last 1000 lines when it exceeds 512KB
+    # (only done between restarts, while tee doesn't hold the fd)
     if [ -f "$SINGBOX_LOG" ] && [ "$(wc -c < "$SINGBOX_LOG")" -gt 524288 ]; then
       tail -n 1000 "$SINGBOX_LOG" > "$SINGBOX_LOG.tmp" && mv "$SINGBOX_LOG.tmp" "$SINGBOX_LOG"
     fi
     sing-box run -c "$DATA/config.json" 2>&1 | tee -a "$SINGBOX_LOG"
-    echo "sing-box 已退出，1 秒后重启…" | tee -a "$SINGBOX_LOG"
+    echo "sing-box exited, restarting in 1 second..." | tee -a "$SINGBOX_LOG"
     sleep 1
   done
 ) &
@@ -71,5 +74,5 @@ node /app/server.js &
 NODE_PID=$!
 trap 'kill "$NODE_PID" "$LOOP_PID" 2>/dev/null; pkill -x sing-box 2>/dev/null || true' TERM INT
 
-echo "订阅地址: http://${VPS_HOST}:${LISTEN_PORT}/${SUB_TOKEN}"
+echo "Subscription URL: http://${VPS_HOST}:${LISTEN_PORT}/${SUB_TOKEN}"
 wait "$NODE_PID"

@@ -1,8 +1,9 @@
 #!/bin/sh
-# 容器版 ts-ctl.sh：无 systemd，直接操作文件并通过 pkill 触发 entrypoint 的重启循环。
-# 用法：
-#   ts-ctl.sh apply <tmpfile>   校验并安装新的 sing-box 配置，然后重启 sing-box
-#   ts-ctl.sh logs              输出 sing-box 日志中 tailscale 相关的近期行
+# Container version of ts-ctl.sh: no systemd; operates on files directly and triggers
+# the entrypoint's restart loop via pkill.
+# Usage:
+#   ts-ctl.sh apply <tmpfile>   validate and install a new sing-box config, then restart sing-box
+#   ts-ctl.sh logs              print recent tailscale-related lines from the sing-box log
 set -eu
 
 CONFIG="${SINGBOX_CONFIG:-/data/config.json}"
@@ -13,9 +14,9 @@ case "${1:-}" in
     tmp="${2:-}"
     case "$tmp" in
       /tmp/*) ;;
-      *) echo "非法的临时文件路径" >&2; exit 1 ;;
+      *) echo "Invalid temporary file path" >&2; exit 1 ;;
     esac
-    [ -f "$tmp" ] || { echo "临时文件不存在" >&2; exit 1; }
+    [ -f "$tmp" ] || { echo "Temporary file does not exist" >&2; exit 1; }
     sing-box check -c "$tmp"
     cp "$tmp" "$CONFIG"
     chmod 600 "$CONFIG"
@@ -26,7 +27,7 @@ case "${1:-}" in
     grep -iE 'tailscale|tsnet|login|exit' "$LOG" 2>/dev/null | tail -n 30 || true
     ;;
   *)
-    echo "用法: $0 {apply <tmpfile>|logs}" >&2
+    echo "Usage: $0 {apply <tmpfile>|logs}" >&2
     exit 1
     ;;
 esac

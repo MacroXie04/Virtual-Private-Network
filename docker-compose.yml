@@ -10,9 +10,9 @@ services:
       - "443:443/tcp"
       - "8080:8080/tcp"
     environment:
-      TS_AUTH_KEY: ${TS_AUTH_KEY:?请在 .env 中设置 TS_AUTH_KEY}
-      EXIT_NODE: ${EXIT_NODE:?请在 .env 中设置 EXIT_NODE}
-      VPS_HOST: ${VPS_HOST:?请在 .env 中设置 VPS_HOST}
+      TS_AUTH_KEY: ${TS_AUTH_KEY:?Please set TS_AUTH_KEY in .env}
+      EXIT_NODE: ${EXIT_NODE:?Please set EXIT_NODE in .env}
+      VPS_HOST: ${VPS_HOST:?Please set VPS_HOST in .env}
       SERVER_NAME: ${SERVER_NAME:-www.microsoft.com}
       NODE_NAME: ${NODE_NAME:-vps-reality}
       TS_API_KEY: ${TS_API_KEY:-}

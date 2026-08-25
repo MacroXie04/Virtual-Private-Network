@@ -13,7 +13,7 @@ import { parseTsOutbound, updateTsOutbound, fetchExitNodes } from './tailscale.j
 
 const token = process.env.SUB_TOKEN;
 if (!token) {
-  console.error('缺少环境变量 SUB_TOKEN');
+  console.error('Missing environment variable SUB_TOKEN');
   process.exit(1);
 }
 
@@ -23,7 +23,7 @@ const singboxConfigPath = process.env.SINGBOX_CONFIG ?? '/etc/sing-box/config.js
 const tsCtlPath = process.env.TS_CTL ?? '/opt/vpn-sub/ts-ctl.sh';
 const tsApiKey = process.env.TS_API_KEY ?? '';
 
-// 容器内以 root 运行（无 sudo），裸机 systemd 下经 sudoers 放行 ts-ctl.sh
+// Runs as root inside the container (no sudo); on bare-metal systemd, ts-ctl.sh is allowed via sudoers
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
 const ctlCmd = (args) => (isRoot ? [tsCtlPath, args] : ['sudo', [tsCtlPath, ...args]]);
 
@@ -76,7 +76,7 @@ async function collectTsState() {
   try {
     Object.assign(state, parseTsOutbound(JSON.parse(fs.readFileSync(singboxConfigPath, 'utf8'))));
   } catch (err) {
-    state.error = `读取 sing-box 配置失败：${err.message}`;
+    state.error = `Failed to read sing-box config: ${err.message}`;
   }
   state.exitNodes = tsApiKey ? await fetchExitNodes(tsApiKey) : [];
   state.logs = run(...ctlCmd(['logs']));
@@ -90,7 +90,7 @@ function readBody(req, limit = 8192) {
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > limit) {
-        reject(new Error('请求体过大'));
+        reject(new Error('Request body too large'));
         req.destroy();
         return;
       }
@@ -101,7 +101,7 @@ function readBody(req, limit = 8192) {
   });
 }
 
-// 修改 tailscale outbound 并重启 sing-box，返回 null 或错误消息
+// Update the tailscale outbound and restart sing-box; returns null or an error message
 function applyTsConfig({ authKey, exitNode }) {
   let next;
   try {
@@ -117,9 +117,9 @@ function applyTsConfig({ authKey, exitNode }) {
     execFileSync(cmd, args, { encoding: 'utf8', timeout: 30000 });
     return null;
   } catch (err) {
-    try { fs.rmSync(tmp, { force: true }); } catch { /* 忽略清理失败 */ }
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore cleanup failure */ }
     const detail = String(err.stderr || err.message || err).trim().split('\n').pop();
-    return detail || '应用配置失败';
+    return detail || 'Failed to apply config';
   }
 }
 

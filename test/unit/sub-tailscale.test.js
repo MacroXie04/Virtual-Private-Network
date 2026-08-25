@@ -22,7 +22,7 @@ const config = {
   outbounds: [{ type: 'direct', tag: 'direct' }],
 };
 
-test('parseTsOutbound 提取当前状态并掩码 auth key', () => {
+test('parseTsOutbound extracts current state and masks the auth key', () => {
   const state = parseTsOutbound(config);
   assert.equal(state.exitNode, '100.64.0.1');
   assert.equal(state.hasAuthKey, true);
@@ -30,44 +30,44 @@ test('parseTsOutbound 提取当前状态并掩码 auth key', () => {
   assert.equal(state.hostname, 'proxy-vps');
 });
 
-test('parseTsOutbound 找不到 ts-out 时抛错', () => {
+test('parseTsOutbound throws when ts-out is not found', () => {
   assert.throws(() => parseTsOutbound({ endpoints: [] }), /ts-out/);
 });
 
-test('maskAuthKey 处理空值与短 key', () => {
+test('maskAuthKey handles empty values and short keys', () => {
   assert.equal(maskAuthKey(''), '');
   assert.equal(maskAuthKey(undefined), '');
   assert.equal(maskAuthKey('abc'), '****');
 });
 
-test('updateTsOutbound 更新 exit node 与 auth key', () => {
+test('updateTsOutbound updates exit node and auth key', () => {
   const next = updateTsOutbound(config, { authKey: 'tskey-auth-newkey9999', exitNode: '100.64.0.2' });
   const ts = next.endpoints.find((o) => o.tag === 'ts-out');
   assert.equal(ts.exit_node, '100.64.0.2');
   assert.equal(ts.auth_key, 'tskey-auth-newkey9999');
-  // 不修改原对象
+  // does not mutate the original object
   assert.equal(config.endpoints[0].exit_node, '100.64.0.1');
-  // 其余配置原样保留
+  // the rest of the config is preserved as-is
   assert.deepEqual(next.outbounds, [{ type: 'direct', tag: 'direct' }]);
 });
 
-test('updateTsOutbound authKey 为空时保留原值', () => {
+test('updateTsOutbound keeps the original auth key when authKey is empty', () => {
   const next = updateTsOutbound(config, { authKey: '', exitNode: 'my-exit-node' });
   const ts = next.endpoints.find((o) => o.tag === 'ts-out');
   assert.equal(ts.exit_node, 'my-exit-node');
   assert.equal(ts.auth_key, 'tskey-auth-abcdef123456');
 });
 
-test('updateTsOutbound 拒绝非法 exit node', () => {
+test('updateTsOutbound rejects invalid exit nodes', () => {
   assert.throws(() => updateTsOutbound(config, { exitNode: '' }), /Exit Node/);
   assert.throws(() => updateTsOutbound(config, { exitNode: 'a b"c' }), /Exit Node/);
 });
 
-test('updateTsOutbound 找不到 ts-out 时抛错', () => {
+test('updateTsOutbound throws when ts-out is not found', () => {
   assert.throws(() => updateTsOutbound({ endpoints: [] }, { exitNode: '100.64.0.2' }), /ts-out/);
 });
 
-test('fetchExitNodes 只保留宣告了默认路由的设备', async () => {
+test('fetchExitNodes keeps only devices advertising default routes', async () => {
   const fakeFetch = async () => ({
     ok: true,
     json: async () => ({
@@ -85,7 +85,7 @@ test('fetchExitNodes 只保留宣告了默认路由的设备', async () => {
   ]);
 });
 
-test('fetchExitNodes API 失败时返回空数组', async () => {
+test('fetchExitNodes returns an empty array when the API fails', async () => {
   const httpError = await fetchExitNodes('bad-key', async () => ({ ok: false, status: 401 }));
   assert.deepEqual(httpError, []);
   const netError = await fetchExitNodes('key', async () => { throw new Error('network down'); });

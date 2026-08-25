@@ -18,7 +18,7 @@ const cfg = {
   name: 'test-node',
 };
 
-test('vless link 包含全部 REALITY 参数', () => {
+test('vless link contains all REALITY parameters', () => {
   const link = buildVlessLink(cfg);
   assert.ok(link.startsWith(`vless://${cfg.uuid}@${cfg.host}:443?`));
   const url = new URL(link);
@@ -38,13 +38,13 @@ test('vless link 包含全部 REALITY 参数', () => {
   assert.equal(decodeURIComponent(url.hash.slice(1)), cfg.name);
 });
 
-test('mixed 格式是链接的 base64 编码', () => {
+test('mixed format is the base64 encoding of the links', () => {
   const mixed = buildMixed(cfg);
   const decoded = Buffer.from(mixed, 'base64').toString('utf8');
   assert.equal(decoded, buildVlessLink(cfg));
 });
 
-test('sing-box 客户端配置含 reality 公钥与正确的 server/port', () => {
+test('sing-box client config contains the reality public key and correct server/port', () => {
   const out = buildSingboxConfig(cfg);
   const proxy = out.outbounds.find((o) => o.type === 'vless');
   assert.ok(proxy);
@@ -57,10 +57,10 @@ test('sing-box 客户端配置含 reality 公钥与正确的 server/port', () =>
   assert.equal(proxy.tls.reality.short_id, cfg.shortId);
   assert.equal(proxy.tls.server_name, cfg.serverName);
   assert.equal(out.route.final, proxy.tag);
-  JSON.stringify(out); // 可序列化
+  JSON.stringify(out); // must be serializable
 });
 
-test('Clash Meta 配置含 reality-opts 与节点信息', () => {
+test('Clash Meta config contains reality-opts and node info', () => {
   const yaml = buildClashConfig(cfg);
   assert.match(yaml, /type: vless/);
   assert.match(yaml, new RegExp(`server: ${cfg.host.replaceAll('.', '\\.')}`));
@@ -72,11 +72,11 @@ test('Clash Meta 配置含 reality-opts 与节点信息', () => {
   assert.match(yaml, /MATCH,PROXY/);
 });
 
-test('fromEnv 缺变量时报错并列出缺失项', () => {
-  assert.throws(() => fromEnv({}), /缺少环境变量: UUID, VPS_HOST, SERVER_NAME, REALITY_PUBLIC_KEY, SHORT_ID/);
+test('fromEnv throws and lists missing variables', () => {
+  assert.throws(() => fromEnv({}), /Missing environment variables: UUID, VPS_HOST, SERVER_NAME, REALITY_PUBLIC_KEY, SHORT_ID/);
 });
 
-test('fromEnv 从环境变量构建配置', () => {
+test('fromEnv builds config from environment variables', () => {
   const parsed = fromEnv({
     UUID: cfg.uuid,
     VPS_HOST: cfg.host,

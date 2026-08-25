@@ -1,6 +1,7 @@
-// Tailscale 控制逻辑：读取/修改 sing-box 配置中的 tailscale endpoint（tag: ts-out，
-// sing-box 1.13 起 tailscale 从 outbound 迁移为 endpoint），
-// 以及通过 Tailscale API 拉取可用 Exit Node 列表。均为纯函数，便于单测。
+// Tailscale control logic: read/modify the tailscale endpoint in the sing-box config
+// (tag: ts-out — since sing-box 1.13, tailscale moved from an outbound to an endpoint),
+// and fetch the list of available Exit Nodes via the Tailscale API.
+// All pure functions, easy to unit test.
 
 export function maskAuthKey(key) {
   if (!key) return '';
@@ -12,7 +13,7 @@ export function maskAuthKey(key) {
 function findTsEndpoint(configObj) {
   const endpoints = Array.isArray(configObj?.endpoints) ? configObj.endpoints : [];
   const ts = endpoints.find((o) => o && o.type === 'tailscale' && o.tag === 'ts-out');
-  if (!ts) throw new Error('配置中找不到 tag 为 ts-out 的 tailscale endpoint');
+  if (!ts) throw new Error('No tailscale endpoint with tag ts-out found in the config');
   return ts;
 }
 
@@ -26,10 +27,10 @@ export function parseTsOutbound(configObj) {
   };
 }
 
-// 返回更新后的新配置对象，不修改入参。authKey 为空字符串表示不修改。
+// Returns a new, updated config object without mutating the input. An empty authKey means "keep unchanged".
 export function updateTsOutbound(configObj, { authKey = '', exitNode } = {}) {
   if (!exitNode || !/^[a-zA-Z0-9._-]+$/.test(exitNode)) {
-    throw new Error('Exit Node 不能为空，且只能包含字母、数字、点、横线、下划线');
+    throw new Error('Exit Node must not be empty and may only contain letters, digits, dots, hyphens, and underscores');
   }
   findTsEndpoint(configObj);
   const endpoints = configObj.endpoints.map((o) => {
@@ -43,14 +44,14 @@ export function updateTsOutbound(configObj, { authKey = '', exitNode } = {}) {
   return { ...configObj, endpoints };
 }
 
-// 拉取 tailnet 中宣告了 exit node 能力的设备。失败时返回 []，不抛错。
+// Fetch devices in the tailnet that advertise exit node capability. Returns [] on failure; never throws.
 export async function fetchExitNodes(apiKey, fetchImpl = fetch) {
   try {
     const res = await fetchImpl('https://api.tailscale.com/api/v2/tailnet/-/devices', {
       headers: { authorization: `Bearer ${apiKey}` },
     });
     if (!res.ok) {
-      console.warn(`Tailscale API 返回 ${res.status}，exit node 列表不可用`);
+      console.warn(`Tailscale API returned ${res.status}; exit node list unavailable`);
       return [];
     }
     const data = await res.json();
@@ -66,7 +67,7 @@ export async function fetchExitNodes(apiKey, fetchImpl = fetch) {
       }))
       .filter((d) => d.ip);
   } catch (err) {
-    console.warn(`Tailscale API 请求失败：${err.message}，exit node 列表不可用`);
+    console.warn(`Tailscale API request failed: ${err.message}; exit node list unavailable`);
     return [];
   }
 }

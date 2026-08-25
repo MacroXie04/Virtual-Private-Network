@@ -1,12 +1,12 @@
 import { pathToFileURL } from 'node:url';
 
-// 节点配置：{ uuid, host, port, serverName, publicKey, shortId, name }
+// Node config: { uuid, host, port, serverName, publicKey, shortId, name }
 
 export function fromEnv(env = process.env) {
   const required = ['UUID', 'VPS_HOST', 'SERVER_NAME', 'REALITY_PUBLIC_KEY', 'SHORT_ID'];
   const missing = required.filter((k) => !env[k]);
   if (missing.length > 0) {
-    throw new Error(`缺少环境变量: ${missing.join(', ')}`);
+    throw new Error(`Missing environment variables: ${missing.join(', ')}`);
   }
   return {
     uuid: env.UUID,
@@ -119,7 +119,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const cfg = fromEnv();
     if (!(format in formats)) {
-      console.error(`未知格式 "${format}"，可用: ${Object.keys(formats).join(', ')}`);
+      console.error(`Unknown format "${format}", available: ${Object.keys(formats).join(', ')}`);
       process.exit(1);
     }
     const out = formats[format](cfg);
