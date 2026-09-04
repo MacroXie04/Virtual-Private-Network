@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "sing-box (VLESS+REALITY) backend egressing through a Tailscale exit node, with a minimal subscription service.",
+  "description": "Hardened multi-user VLESS+REALITY gateway with embedded Tailscale exit-node egress.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24.20.0 <25"
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
-    "start": "node sub/server.js",
-    "links": "node sub/generate.js"
+    "start": "node src/controller-server.js",
+    "bootstrap": "node src/bootstrap.js",
+    "healthcheck": "node src/healthcheck.js"
   }
 }

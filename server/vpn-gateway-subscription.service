@@ -1,0 +1,45 @@
+[Unit]
+Description=VPN gateway subscription service
+After=vpn-gateway-controller.service
+BindsTo=vpn-gateway-controller.service
+PartOf=vpn-gateway.target
+
+[Service]
+Type=simple
+User=vpn-sub
+Group=vpn-sub
+UMask=0077
+WorkingDirectory=/opt/vpn-gateway
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env DATA_DIR=/var/lib/vpn-gateway SUB_HOST=127.0.0.1 SUB_PORT=8080 node /opt/vpn-gateway/src/subscription-server.js
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=150s
+KillMode=mixed
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/var/lib/vpn-gateway
+
+[Install]
+WantedBy=vpn-gateway.target

@@ -1,33 +1,62 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-# Stage 1: build sing-box from source.
-# The official release binaries are built without the with_tailscale build tag
-# (tailscale outbound unavailable) and are dynamically linked against glibc;
-# here we build a static binary with CGO_ENABLED=0 so the runtime can use alpine.
-FROM golang:1.25-alpine AS singbox
-ARG SINGBOX_VERSION=1.13.19
-ARG BUILD_TAGS=with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_tailscale
-RUN CGO_ENABLED=0 go install -trimpath -ldflags "-s -w" -tags "$BUILD_TAGS" \
-    "github.com/sagernet/sing-box/cmd/sing-box@v${SINGBOX_VERSION}"
+# Build the required embedded Tailscale outbound into the pinned sing-box
+# release, then copy only the static binary into the runtime image.
+FROM golang:1.26.7-alpine3.24@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS sing-box-build
 
-# Stage 2: runtime (Node subscription service + sing-box)
-FROM node:24-alpine
-COPY --from=singbox /go/bin/sing-box /usr/local/bin/sing-box
+ENV GOPROXY=https://proxy.golang.org \
+    GOSUMDB=sum.golang.org
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go install \
+      -trimpath \
+      -tags "with_gvisor,with_utls,with_tailscale" \
+      -ldflags "-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version=1.13.21 -X internal/godebug.defaultGODEBUG=multipathtcp=0" \
+      github.com/sagernet/sing-box/cmd/sing-box@v1.13.21
+RUN /go/bin/sing-box version | grep -Fx "sing-box version 1.13.21" \
+    && /go/bin/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale"
+
+FROM node:24.20.0-alpine3.24@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+
+RUN addgroup -S -g 11000 vpn-runtime \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11000 -G vpn-runtime vpn-runtime \
+    && addgroup -S -g 11001 vpn-sub \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11001 -G vpn-sub vpn-sub \
+    && addgroup -S -g 11002 vpn-admin \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11002 -G vpn-admin vpn-admin \
+    && test -x /usr/bin/flock
+
+COPY --from=sing-box-build /go/bin/sing-box /usr/local/bin/sing-box
 
 WORKDIR /app
-COPY sub/ ./
-COPY server/config.template.json ./config.template.json
-COPY docker/entrypoint.sh docker/ts-ctl.sh ./
-RUN chmod +x /app/entrypoint.sh /app/ts-ctl.sh
+COPY --chown=root:root --chmod=0644 package.json ./package.json
+COPY --chown=root:root src/ ./src/
+COPY --chown=root:root --chmod=0755 docker/entrypoint.sh ./entrypoint.sh
 
-ENV LISTEN_PORT=8080 \
-    NODE_PORT=443 \
-    SINGBOX_CONFIG=/data/config.json \
-    SINGBOX_LOG=/data/sing-box.log \
-    TS_CTL=/app/ts-ctl.sh
+ENV NODE_ENV=production \
+    DATA_DIR=/data \
+    CONTROLLER_SOCKET=/run/vpn-gateway/controller.sock \
+    SINGBOX_BIN=/usr/local/bin/sing-box \
+    SINGBOX_CONFIG=/data/runtime/sing-box.json \
+    SINGBOX_STATE_DIR=/data/tailscale \
+    SUPERVISE=1 \
+    NODE_PORT=8443 \
+    SUB_HOST=0.0.0.0 \
+    SUB_PORT=8080 \
+    ADMIN_HOST=0.0.0.0 \
+    ADMIN_PORT=8081 \
+    SINGBOX_UID=11000 \
+    SINGBOX_GID=11000 \
+    SUB_UID=11001 \
+    SUB_GID=11001 \
+    ADMIN_UID=11002 \
+    ADMIN_GID=11002
 
-# /data: tsnet state, credentials generated on first start (env), rendered sing-box config, logs
-VOLUME /data
-EXPOSE 443/tcp 8080/tcp
+VOLUME ["/data"]
+EXPOSE 8443/tcp 8080/tcp 8081/tcp
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD ["node", "/app/src/healthcheck.js"]
+
+USER root:root
 ENTRYPOINT ["/app/entrypoint.sh"]

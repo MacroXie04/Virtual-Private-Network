@@ -3,6 +3,12 @@ dist/
 .wrangler/
 .dev.vars
 .env
+backups/
+*.tgz
+*.tar.gz
+*.age
+*.gpg
 *.log
 .DS_Store
 .tmp-test/
+.vpn-admin-tunnel/
