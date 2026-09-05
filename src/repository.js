@@ -15,11 +15,11 @@ import {
 import path from 'node:path';
 import {
   assertFailClosedConfig,
-  assertLegacyV2Config,
   buildSubscriptionView,
   renderSingBoxConfig,
 } from './render.js';
-import { validateState, validateStoredState, validateSubscriptionView } from './state-schema.js';
+import { validateLegacyV2Revision } from './legacy-v2.js';
+import { validateState, validateSubscriptionView } from './state-schema.js';
 import { ValidationError, expectInteger, expectString, isPlainObject } from './validation.js';
 
 const ROOT_MODE = 0o751;
@@ -318,7 +318,7 @@ export class RevisionRepository {
     renderView = buildSubscriptionView,
     maxRevisions = DEFAULT_MAX_REVISIONS,
     maxRevisionBytes = DEFAULT_MAX_REVISION_BYTES,
-    allowPolicyUpgrade = false,
+    allowLegacyMigration = false,
   } = {}) {
     if (typeof NOFOLLOW !== 'number' || typeof DIRECTORY !== 'number') {
       throw new RepositoryError('UNSUPPORTED_PLATFORM', 'safe no-follow file operations are unavailable');
@@ -332,8 +332,10 @@ export class RevisionRepository {
     this.subscriptionGid = validateGid(subscriptionGid, 'subscriptionGid');
     this.renderConfig = renderConfig;
     this.renderView = renderView;
-    if (typeof allowPolicyUpgrade !== 'boolean') throw new TypeError('allowPolicyUpgrade must be a boolean');
-    this.allowPolicyUpgrade = allowPolicyUpgrade;
+    if (typeof allowLegacyMigration !== 'boolean') {
+      throw new TypeError('allowLegacyMigration must be boolean');
+    }
+    this.allowLegacyMigration = allowLegacyMigration;
     this.ownerUid = SERVICE_UID;
     this.ownerGid = PRIVATE_GID;
     this.maxRevisions = expectInteger(maxRevisions, 'maxRevisions', { min: 2, max: 256 });
@@ -671,7 +673,7 @@ export class RevisionRepository {
     return Object.freeze({ id, revision: state.revision, path: finalPath, manifest });
   }
 
-  async readRevisionInternal(id, allowPolicyUpgrade) {
+  async readRevisionInternal(id, allowLegacyMigration) {
     const revisionPath = await this.assertRevisionDirectory(id);
     const stateBytes = await readNoFollow(path.join(revisionPath, 'state.json'), {
       maxBytes: 1024 * 1024,
@@ -721,38 +723,29 @@ export class RevisionRepository {
       }
     }
 
-    // Authenticate every raw byte against the manifest before applying the
-    // narrowly scoped, in-memory compatibility transform below.
+    // Authenticate every raw byte before choosing a schema-specific parser.
+    // Legacy state is returned only as an explicit migration source; it is
+    // never normalized into the active schema or accepted by a writer.
     let state;
-    let policyState;
     let config;
     let subscriptionView;
-    let requiresPolicyUpgrade = false;
+    let requiresIngressMigration = false;
     try {
-      try {
+      if (rawState?.schemaVersion === 3) {
         state = validateState(rawState);
-        policyState = state;
-      } catch (error) {
-        if (!allowPolicyUpgrade) throw error;
-        state = validateStoredState(rawState);
-        policyState = validateState({
-          ...state,
-          health: {
-            ...state.health,
-            target: { host: state.reality.serverName, port: 443 },
-          },
-        });
-        requiresPolicyUpgrade = true;
+        config = assertFailClosedConfig(rawConfig, state);
+        subscriptionView = validateSubscriptionView(rawView);
+      } else {
+        if (!allowLegacyMigration || rawState?.schemaVersion !== 2) {
+          throw new ValidationError('state.schemaVersion', 'requires an explicit supported migration');
+        }
+        ({ state, config, subscriptionView } = validateLegacyV2Revision(
+          rawState,
+          rawConfig,
+          rawView,
+        ));
+        requiresIngressMigration = true;
       }
-
-      try {
-        config = assertFailClosedConfig(rawConfig, policyState);
-      } catch (error) {
-        if (!allowPolicyUpgrade) throw error;
-        config = assertLegacyV2Config(rawConfig, policyState);
-        requiresPolicyUpgrade = true;
-      }
-      subscriptionView = validateSubscriptionView(rawView);
       if (manifest.createdAt !== state.updatedAt) {
         throw new RepositoryError('INVALID_REVISION', 'manifest timestamp does not match state');
       }
@@ -763,14 +756,16 @@ export class RevisionRepository {
     if (subscriptionView.revision !== state.revision) {
       throw new RepositoryError('INVALID_REVISION', 'subscription projection revision does not match state');
     }
-    try {
-      const expectedView = validateSubscriptionView(this.renderView(policyState));
-      if (JSON.stringify(subscriptionView) !== JSON.stringify(expectedView)) {
-        throw new RepositoryError('INVALID_REVISION', 'subscription projection does not match state');
+    if (!requiresIngressMigration) {
+      try {
+        const expectedView = validateSubscriptionView(this.renderView(state));
+        if (JSON.stringify(subscriptionView) !== JSON.stringify(expectedView)) {
+          throw new RepositoryError('INVALID_REVISION', 'subscription projection does not match state');
+        }
+      } catch (error) {
+        if (error instanceof RepositoryError) throw error;
+        throw new RepositoryError('INVALID_REVISION', 'subscription projection is semantically invalid');
       }
-    } catch (error) {
-      if (error instanceof RepositoryError) throw error;
-      throw new RepositoryError('INVALID_REVISION', 'subscription projection is semantically invalid');
     }
     return {
       id,
@@ -779,12 +774,12 @@ export class RevisionRepository {
       config,
       subscriptionView,
       manifest,
-      requiresPolicyUpgrade,
+      requiresIngressMigration,
     };
   }
 
   async readRevision(id) {
-    return this.readRevisionInternal(id, this.allowPolicyUpgrade);
+    return this.readRevisionInternal(id, this.allowLegacyMigration);
   }
 
   /**

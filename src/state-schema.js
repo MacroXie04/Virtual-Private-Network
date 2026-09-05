@@ -8,24 +8,25 @@ import {
   expectString,
   normalizeDisplayName,
   validateAbsoluteStatePath,
-  validateHostRecord,
-  validateKeyMaterial,
   validatePort,
-  validatePublicBaseUrl,
-  validateRealityKeyPair,
-  validateShortId,
+  validatePublicDnsHostname,
+  validatePublicIngressSettings,
   validateTimestamp,
   validateTokenHash,
   validateUuid,
+  validateWebSocketPath,
 } from './validation.js';
 
-export const STATE_SCHEMA_VERSION = 2;
-export const SUBSCRIPTION_VIEW_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 3;
+export const SUBSCRIPTION_VIEW_SCHEMA_VERSION = 2;
 export const MAX_USERS = 256;
 export const MAX_USER_RECORDS = 1024;
 export const MAX_REVOKED_USERS = 256;
 export const HEALTH_USERNAME = 'vpn-health';
 export const HEALTH_PASSWORD_BYTES = 32;
+export const VLESS_LISTEN_HOST = '127.0.0.1';
+export const VLESS_LISTEN_PORT = 8443;
+export const PUBLIC_VLESS_PORT = 443;
 
 const USER_STATUSES = new Set(['active', 'disabled', 'revoked']);
 
@@ -115,43 +116,7 @@ function validateUser(value, path) {
 }
 
 function validateGateway(value, path) {
-  const gateway = expectExactKeys(value, [
-    'host',
-    'advertisedPort',
-    'listenPort',
-    'publicBaseUrl',
-  ], path);
-  return {
-    host: validateHostRecord(gateway.host, `${path}.host`),
-    advertisedPort: validatePort(gateway.advertisedPort, `${path}.advertisedPort`),
-    listenPort: validatePort(gateway.listenPort, `${path}.listenPort`),
-    publicBaseUrl: validatePublicBaseUrl(gateway.publicBaseUrl, `${path}.publicBaseUrl`),
-  };
-}
-
-function validateReality(value, path, { publicOnly = false } = {}) {
-  const keys = publicOnly
-    ? ['serverName', 'publicKey', 'shortId']
-    : ['serverName', 'privateKey', 'publicKey', 'shortId'];
-  const reality = expectExactKeys(value, keys, path);
-  const result = {
-    serverName: normalizeDnsName(reality.serverName, `${path}.serverName`),
-    publicKey: validateKeyMaterial(reality.publicKey, `${path}.publicKey`),
-    shortId: validateShortId(reality.shortId, `${path}.shortId`),
-  };
-  if (!publicOnly) {
-    const pair = validateRealityKeyPair(reality.privateKey, result.publicKey, {
-      privatePath: `${path}.privateKey`,
-      publicPath: `${path}.publicKey`,
-    });
-    return {
-      serverName: result.serverName,
-      privateKey: pair.privateKey,
-      publicKey: pair.publicKey,
-      shortId: result.shortId,
-    };
-  }
-  return result;
+  return validatePublicIngressSettings(value, path);
 }
 
 function validateTailscale(value, path) {
@@ -197,7 +162,7 @@ function validateHealth(value, path) {
     username,
     password,
     target: {
-      host: normalizeConnectHost(target.host, `${path}.target.host`),
+      host: validatePublicDnsHostname(target.host, `${path}.target.host`),
       port: validatePort(target.port, `${path}.target.port`),
     },
   };
@@ -233,14 +198,13 @@ function assertUniqueUsers(users) {
   });
 }
 
-function validateStateWithOptions(value, { allowLegacyHealthTarget = false } = {}) {
+function validateStateWithOptions(value) {
   const state = expectExactKeys(value, [
     'schemaVersion',
     'revision',
     'createdAt',
     'updatedAt',
     'gateway',
-    'reality',
     'tailscale',
     'health',
     'admin',
@@ -276,22 +240,26 @@ function validateStateWithOptions(value, { allowLegacyHealthTarget = false } = {
     createdAt,
     updatedAt,
     gateway: validateGateway(state.gateway, 'state.gateway'),
-    reality: validateReality(state.reality, 'state.reality'),
     tailscale: validateTailscale(state.tailscale, 'state.tailscale'),
     health: validateHealth(state.health, 'state.health'),
     admin: validateAdmin(state.admin, 'state.admin'),
     users,
   };
-  if (normalized.gateway.listenPort === normalized.health.listenPort) {
-    throw new ValidationError('state.health.listenPort', 'must differ from gateway.listenPort');
+  if (normalized.health.listenPort === VLESS_LISTEN_PORT) {
+    throw new ValidationError('state.health.listenPort', `must differ from ${VLESS_LISTEN_PORT}`);
   }
-  if (!allowLegacyHealthTarget && (
-    normalized.health.target.host !== normalized.reality.serverName
-    || normalized.health.target.port !== 443
-  )) {
+  const subscriptionHostname = new URL(normalized.gateway.subscriptionPublicBaseUrl).hostname;
+  if (
+    normalized.health.target.port !== 443
+    || [
+      normalized.gateway.vpnPublicHostname,
+      subscriptionHostname,
+      normalized.gateway.adminPublicHostname,
+    ].includes(normalized.health.target.host)
+  ) {
     throw new ValidationError(
       'state.health.target',
-      'must probe the REALITY server name on port 443 so readiness covers exit-routed DNS and TCP',
+      'must use an independent public DNS hostname on port 443',
     );
   }
   return normalized;
@@ -299,15 +267,6 @@ function validateStateWithOptions(value, { allowLegacyHealthTarget = false } = {
 
 export function validateState(value) {
   return validateStateWithOptions(value);
-}
-
-/**
- * Read-only compatibility parser for the short-lived schema-v2 policy that
- * allowed an arbitrary readiness target. Writers must always use
- * `validateState`; bootstrap upgrades this shape before any service starts.
- */
-export function validateStoredState(value) {
-  return validateStateWithOptions(value, { allowLegacyHealthTarget: true });
 }
 
 export function parseStateJson(text) {
@@ -336,27 +295,50 @@ export function validateSubscriptionView(value) {
     'schemaVersion',
     'revision',
     'gateway',
-    'reality',
     'users',
   ], 'subscriptionView');
   if (view.schemaVersion !== SUBSCRIPTION_VIEW_SCHEMA_VERSION) {
     throw new ValidationError('subscriptionView.schemaVersion', `must be ${SUBSCRIPTION_VIEW_SCHEMA_VERSION}`);
   }
-  const gateway = expectExactKeys(view.gateway, ['host', 'advertisedPort'], 'subscriptionView.gateway');
+  const gateway = expectExactKeys(
+    view.gateway,
+    ['vpnPublicHostname', 'subscriptionPublicHostname', 'port', 'websocketPath'],
+    'subscriptionView.gateway',
+  );
   if (!Array.isArray(view.users)) throw new ValidationError('subscriptionView.users', 'must be an array');
   if (view.users.length > MAX_USERS) {
     throw new ValidationError('subscriptionView.users', `must contain at most ${MAX_USERS} active users`);
   }
   const users = view.users.map((user, index) => validateProjectedUser(user, `subscriptionView.users[${index}]`));
   assertUniqueUsers(users.map((user) => ({ ...user, status: 'active' })));
+  const normalizedGateway = {
+    vpnPublicHostname: validatePublicDnsHostname(
+      gateway.vpnPublicHostname,
+      'subscriptionView.gateway.vpnPublicHostname',
+    ),
+    subscriptionPublicHostname: validatePublicDnsHostname(
+      gateway.subscriptionPublicHostname,
+      'subscriptionView.gateway.subscriptionPublicHostname',
+    ),
+    port: (() => {
+      const port = validatePort(gateway.port, 'subscriptionView.gateway.port');
+      if (port !== PUBLIC_VLESS_PORT) {
+        throw new ValidationError('subscriptionView.gateway.port', `must be ${PUBLIC_VLESS_PORT}`);
+      }
+      return port;
+    })(),
+    websocketPath: validateWebSocketPath(
+      gateway.websocketPath,
+      'subscriptionView.gateway.websocketPath',
+    ),
+  };
+  if (normalizedGateway.vpnPublicHostname === normalizedGateway.subscriptionPublicHostname) {
+    throw new ValidationError('subscriptionView.gateway', 'VPN and subscription hostnames must be distinct');
+  }
   return {
     schemaVersion: SUBSCRIPTION_VIEW_SCHEMA_VERSION,
     revision: expectInteger(view.revision, 'subscriptionView.revision', { min: 0 }),
-    gateway: {
-      host: validateHostRecord(gateway.host, 'subscriptionView.gateway.host'),
-      advertisedPort: validatePort(gateway.advertisedPort, 'subscriptionView.gateway.advertisedPort'),
-    },
-    reality: validateReality(view.reality, 'subscriptionView.reality', { publicOnly: true }),
+    gateway: normalizedGateway,
     users,
   };
 }

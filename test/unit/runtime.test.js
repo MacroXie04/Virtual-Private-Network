@@ -32,8 +32,18 @@ test('readiness retries the routed probe and eventually succeeds', async () => {
     password: 'health-password',
     targetHost: '1.1.1.1',
     targetPort: 443,
+    websocket: {
+      connectHost: '127.0.0.1', connectPort: 8443,
+      authority: 'vpn.example.com', path: `/${'A'.repeat(43)}`,
+    },
   };
+  let websocketAttempts = 0;
   await waitForDataPath(health, {
+    websocketProbe: async (options) => {
+      websocketAttempts += 1;
+      assert.equal(options.path, health.websocket.path);
+      assert.equal(options.authority, health.websocket.authority);
+    },
     probe: async (options) => {
       attempts += 1;
       assert.equal(options.username, health.username);
@@ -46,6 +56,7 @@ test('readiness retries the routed probe and eventually succeeds', async () => {
     intervalMs: 10,
   });
   assert.equal(attempts, 3);
+  assert.equal(websocketAttempts, 3);
 });
 
 test('supervised runtime restarts its exact child', async () => {

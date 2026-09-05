@@ -40,10 +40,11 @@ ENV NODE_ENV=production \
     SINGBOX_CONFIG=/data/runtime/sing-box.json \
     SINGBOX_STATE_DIR=/data/tailscale \
     SUPERVISE=1 \
+    NODE_HOST=127.0.0.1 \
     NODE_PORT=8443 \
-    SUB_HOST=0.0.0.0 \
+    SUB_HOST=127.0.0.1 \
     SUB_PORT=8080 \
-    ADMIN_HOST=0.0.0.0 \
+    ADMIN_HOST=127.0.0.1 \
     ADMIN_PORT=8081 \
     SINGBOX_UID=11000 \
     SINGBOX_GID=11000 \
@@ -53,7 +54,6 @@ ENV NODE_ENV=production \
     ADMIN_GID=11002
 
 VOLUME ["/data"]
-EXPOSE 8443/tcp 8080/tcp 8081/tcp
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD ["node", "/app/src/healthcheck.js"]

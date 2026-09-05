@@ -20,7 +20,7 @@ import {
   SystemdSingBoxRuntime,
   validateSingBoxConfig,
 } from './runtime.js';
-import { validateAbsoluteStatePath } from './validation.js';
+import { validateAbsoluteStatePath, validatePublicDnsHostname } from './validation.js';
 
 const NOFOLLOW = fsConstants.O_NOFOLLOW;
 const execFileAsync = promisify(execFileCallback);
@@ -357,7 +357,7 @@ export function spawnWebProcesses({
       gid: safeInteger(env.SUB_GID ?? '11001', 'SUB_GID'),
       childEnv: childEnvironment({
         DATA_DIR: dataDir,
-        SUB_HOST: env.SUB_HOST ?? '0.0.0.0',
+        SUB_HOST: env.SUB_HOST ?? '127.0.0.1',
         SUB_PORT: env.SUB_PORT ?? '8080',
       }),
     },
@@ -368,10 +368,9 @@ export function spawnWebProcesses({
       gid: safeInteger(env.ADMIN_GID ?? '11002', 'ADMIN_GID'),
       childEnv: childEnvironment({
         CONTROLLER_SOCKET: env.CONTROLLER_SOCKET,
-        ADMIN_HOST: env.ADMIN_HOST ?? '0.0.0.0',
+        ADMIN_HOST: env.ADMIN_HOST ?? '127.0.0.1',
         ADMIN_PORT: env.ADMIN_PORT ?? '8081',
-        ADMIN_ALLOWED_HOSTS: env.ADMIN_ALLOWED_HOSTS,
-        ADMIN_ALLOWED_ORIGINS: env.ADMIN_ALLOWED_ORIGINS,
+        ADMIN_PUBLIC_HOSTNAME: env.ADMIN_PUBLIC_HOSTNAME,
       }),
     },
   ];
@@ -441,19 +440,45 @@ export async function createControllerApplication({
   const runtimeGid = safeInteger(env.SINGBOX_GID ?? '11000', 'SINGBOX_GID');
   const subscriptionGid = safeInteger(env.SUB_GID ?? '11001', 'SUB_GID');
   const adminGid = safeInteger(env.ADMIN_GID ?? '11002', 'ADMIN_GID');
-  const repo = repository ?? new RevisionRepository(dataDir, { runtimeGid, subscriptionGid });
+  const repo = repository ?? new RevisionRepository(dataDir, {
+    runtimeGid,
+    subscriptionGid,
+    allowLegacyMigration: true,
+  });
   const current = await repo.readCurrent();
   if (!current) throw new Error('VPN gateway is not initialized');
-  if (current.requiresPolicyUpgrade) {
-    throw new Error('VPN gateway policy upgrade must complete before services start');
+  const runtimeRevision = current.requiresIngressMigration ? await repo.readRuntime() : current;
+  if (
+    !runtimeRevision
+    || (current.requiresIngressMigration && (
+      runtimeRevision.requiresIngressMigration
+      || runtimeRevision.manifest.operation !== 'ingress.migrate'
+      || runtimeRevision.state.revision !== current.state.revision + 1
+    ))
+  ) {
+    throw new Error('VPN gateway ingress migration must be staged before services start');
+  }
+  const operationalState = runtimeRevision.state;
+  const adminPublicHostname = validatePublicDnsHostname(
+    env.ADMIN_PUBLIC_HOSTNAME,
+    'ADMIN_PUBLIC_HOSTNAME',
+  );
+  if (adminPublicHostname !== operationalState.gateway.adminPublicHostname) {
+    throw new TypeError('ADMIN_PUBLIC_HOSTNAME must match canonical gateway state');
   }
   const health = {
     listenHost: '127.0.0.1',
-    listenPort: current.state.health.listenPort,
-    username: current.state.health.username,
-    password: current.state.health.password,
-    targetHost: current.state.health.target.host,
-    targetPort: current.state.health.target.port,
+    listenPort: operationalState.health.listenPort,
+    username: operationalState.health.username,
+    password: operationalState.health.password,
+    targetHost: operationalState.health.target.host,
+    targetPort: operationalState.health.target.port,
+    websocket: {
+      connectHost: '127.0.0.1',
+      connectPort: 8443,
+      authority: operationalState.gateway.vpnPublicHostname,
+      path: operationalState.gateway.websocketPath,
+    },
   };
   const expectedConfigPath = path.join(dataDir, 'runtime', 'sing-box.json');
   const configuredPath = absolutePath(env.SINGBOX_CONFIG ?? expectedConfigPath, 'SINGBOX_CONFIG');
@@ -596,7 +621,16 @@ export async function createControllerApplication({
         await control.listen();
         if (stopping) throw new Error('controller startup was interrupted');
         if (supervise) {
-          web = spawnWebProcesses({ env: { ...env, DATA_DIR: dataDir, CONTROLLER_SOCKET: socketPath }, spawn, onUnexpectedExit: fatal });
+          web = spawnWebProcesses({
+            env: {
+              ...env,
+              DATA_DIR: dataDir,
+              CONTROLLER_SOCKET: socketPath,
+              ADMIN_PUBLIC_HOSTNAME: adminPublicHostname,
+            },
+            spawn,
+            onUnexpectedExit: fatal,
+          });
           if (stopping) throw new Error('controller startup was interrupted');
         }
         await notifyReady();

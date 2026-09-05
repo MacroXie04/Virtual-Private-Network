@@ -20,14 +20,17 @@ import { validateSingBoxConfig } from './runtime.js';
 import {
   HEALTH_PASSWORD_BYTES,
   HEALTH_USERNAME,
+  STATE_SCHEMA_VERSION,
   validateState,
 } from './state-schema.js';
 import {
   ValidationError,
-  classifyHost,
   validateAbsoluteStatePath,
   validatePort,
+  validatePublicDnsHostname,
+  validatePublicIngressSettings,
   validateTimestamp,
+  validateWebSocketPath,
 } from './validation.js';
 
 const execFileAsync = promisify(execFileCallback);
@@ -35,7 +38,6 @@ const NOFOLLOW = fsConstants.O_NOFOLLOW;
 const DIRECTORY = fsConstants.O_DIRECTORY;
 const ADMIN_SECRET_BYTES = 32;
 const SECRET_FILE_MAX_BYTES = 1024;
-const SERVER_NAME_PLACEHOLDER = 'replace-with-an-authorized-origin.example';
 const BOOTSTRAP_CONFIG_ID = /^\.bootstrap-config-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/u;
 const PERSISTED_REVISION_ID = /^[0-9]{16}-[0-9a-f]{16}$/u;
 
@@ -312,47 +314,12 @@ export async function persistPreparedAdminSecret(prepared) {
   }
 }
 
-function parseGeneratedKeyPair(stdout) {
-  const values = new Map();
-  for (const line of String(stdout).split(/\r?\n/u)) {
-    if (line === '') continue;
-    const match = /^(PrivateKey|PublicKey):\s*([A-Za-z0-9_+\/-]+={0,2})$/u.exec(line);
-    if (!match || values.has(match[1])) {
-      throw new BootstrapError('KEY_GENERATION_FAILED', 'sing-box returned an invalid REALITY key pair');
-    }
-    values.set(match[1], match[2]);
-  }
-  if (values.size !== 2 || !values.has('PrivateKey') || !values.has('PublicKey')) {
-    throw new BootstrapError('KEY_GENERATION_FAILED', 'sing-box returned an invalid REALITY key pair');
-  }
-  return { privateKey: values.get('PrivateKey'), publicKey: values.get('PublicKey') };
-}
-
 function validateSingBoxPath(value) {
   const binaryPath = absolutePath(value, 'SINGBOX_BIN');
   if (path.basename(binaryPath) !== 'sing-box') {
     throw new ValidationError('SINGBOX_BIN', 'must name the sing-box executable');
   }
   return binaryPath;
-}
-
-export async function generateRealityKeyPair({
-  singBoxPath = '/usr/local/bin/sing-box',
-  execFileImpl = execFileAsync,
-} = {}) {
-  const executable = validateSingBoxPath(singBoxPath);
-  try {
-    const result = await execFileImpl(executable, ['generate', 'reality-keypair'], {
-      timeout: 10_000,
-      maxBuffer: 4096,
-      encoding: 'utf8',
-      env: { PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' },
-    });
-    return parseGeneratedKeyPair(result?.stdout ?? result);
-  } catch (error) {
-    if (error instanceof BootstrapError) throw error;
-    throw new BootstrapError('KEY_GENERATION_FAILED', 'sing-box could not generate a REALITY key pair');
-  }
 }
 
 export async function validateCandidateConfig(state, {
@@ -391,17 +358,6 @@ function envString(env, name, { required = true, fallback } = {}) {
   return value;
 }
 
-function bootstrapServerName(env) {
-  const value = envString(env, 'SERVER_NAME');
-  if (value.toLowerCase().replace(/\.$/u, '') === SERVER_NAME_PLACEHOLDER) {
-    throw new BootstrapError(
-      'PLACEHOLDER_CONFIGURATION',
-      'SERVER_NAME must replace the reserved example with an operator-authorized TLS origin',
-    );
-  }
-  return value;
-}
-
 function envPort(env, names, fallback) {
   const name = names.find((candidate) => env[candidate] !== undefined && env[candidate] !== '');
   if (name === undefined) return validatePort(fallback, names[0]);
@@ -431,65 +387,162 @@ function resolveRepository(env, dataDir, repository) {
     runtimeGid: optionalGid(env, 'SINGBOX_GID'),
     subscriptionGid: optionalGid(env, 'SUB_GID'),
     // This process runs before any service is published and is the only place
-    // allowed to recognize the immediately previous schema-v2 render policy.
-    allowPolicyUpgrade: true,
+    // allowed to recognize the immediately previous REALITY schema.
+    allowLegacyMigration: true,
   });
 }
 
-function policyUpgradeState(current) {
+export function generateWebSocketPath(randomBytesImpl = randomBytes) {
+  return `/${secureRandom(32, randomBytesImpl, 'WebSocket path').toString('base64url')}`;
+}
+
+function ingressEnvironment(env, websocketPath = null) {
+  const configuredPath = env.WS_PATH === undefined || env.WS_PATH === ''
+    ? websocketPath
+    : validateWebSocketPath(envString(env, 'WS_PATH'), 'WS_PATH');
+  const gateway = validatePublicIngressSettings({
+    vpnPublicHostname: envString(env, 'VPN_PUBLIC_HOSTNAME'),
+    subscriptionPublicBaseUrl: envString(env, 'SUBSCRIPTION_PUBLIC_BASE_URL'),
+    adminPublicHostname: envString(env, 'ADMIN_PUBLIC_HOSTNAME'),
+    websocketPath: configuredPath ?? `/${'A'.repeat(43)}`,
+  }, 'gateway');
+  return {
+    gateway: configuredPath === null ? { ...gateway, websocketPath: null } : gateway,
+    egressHealthHost: validatePublicDnsHostname(
+      envString(env, 'EGRESS_HEALTH_HOST'),
+      'EGRESS_HEALTH_HOST',
+    ),
+  };
+}
+
+export function buildIngressMigrationState(current, settings, websocketPath, timestamp) {
+  if (!current?.requiresIngressMigration || current.state?.schemaVersion !== 2) {
+    throw new BootstrapError('MIGRATION_SOURCE_INVALID', 'schema-v2 REALITY state is required');
+  }
+  const updatedAt = timestamp < current.state.updatedAt ? current.state.updatedAt : timestamp;
   return validateState({
-    ...current.state,
+    schemaVersion: STATE_SCHEMA_VERSION,
     revision: current.state.revision + 1,
-    // Keep the transform deterministic across crashes. The immutable
-    // manifest operation/revision records the policy upgrade itself.
-    updatedAt: current.state.updatedAt,
+    createdAt: current.state.createdAt,
+    updatedAt,
+    gateway: { ...settings.gateway, websocketPath },
+    tailscale: current.state.tailscale,
     health: {
       ...current.state.health,
-      target: { host: current.state.reality.serverName, port: 443 },
+      target: { host: settings.egressHealthHost, port: 443 },
     },
+    admin: current.state.admin,
+    users: current.state.users,
   });
 }
 
-async function findPolicyUpgradeRevision(repository, state) {
-  const prefix = `${String(state.revision).padStart(16, '0')}-`;
-  const expected = JSON.stringify(state);
+function migrationCandidateMatches(current, candidate, settings) {
+  const state = candidate.state;
+  return candidate.requiresIngressMigration === false
+    && candidate.manifest.operation === 'ingress.migrate'
+    && state.schemaVersion === STATE_SCHEMA_VERSION
+    && state.revision === current.state.revision + 1
+    && state.createdAt === current.state.createdAt
+    && JSON.stringify(state.users) === JSON.stringify(current.state.users)
+    && JSON.stringify(state.admin) === JSON.stringify(current.state.admin)
+    && JSON.stringify(state.tailscale) === JSON.stringify(current.state.tailscale)
+    && JSON.stringify({ ...state.gateway, websocketPath: null })
+      === JSON.stringify({ ...settings.gateway, websocketPath: null })
+    && state.health.listenPort === current.state.health.listenPort
+    && state.health.username === current.state.health.username
+    && state.health.password === current.state.health.password
+    && state.health.target.host === settings.egressHealthHost
+    && state.health.target.port === 443;
+}
+
+async function findIngressMigrationRevision(repository, current, settings) {
+  const prefix = `${String(current.state.revision + 1).padStart(16, '0')}-`;
   const revisions = await repository.listRevisions();
+  let matched = null;
   for (const record of revisions) {
     if (!record.id.startsWith(prefix)) continue;
     const candidate = await repository.readRevision(record.id);
     if (
-      candidate.requiresPolicyUpgrade === false
-      && candidate.manifest.operation === 'policy.upgrade'
-      && JSON.stringify(candidate.state) === expected
-    ) return candidate;
+      candidate.manifest.operation !== 'ingress.migrate'
+      || !migrationCandidateMatches(current, candidate, settings)
+      || matched !== null
+    ) {
+      throw new BootstrapError('MIGRATION_CONFLICT', 'an incompatible ingress migration revision already exists');
+    }
+    matched = candidate;
   }
-  return null;
+  return matched;
 }
 
-async function upgradePolicyRevision(current, {
+async function ensureMaintenanceMarker(dataDir, timestamp) {
+  const markerPath = path.join(dataDir, 'maintenance');
+  try {
+    await writePrivateFileExclusive(markerPath, Buffer.from(`${timestamp}\n`, 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'FILE_EXISTS') throw error;
+    const existing = (await readBoundedFileNoFollow(markerPath, {
+      maxBytes: 64,
+      requirePrivate: true,
+      description: 'maintenance marker',
+    })).toString('utf8').trim();
+    validateTimestamp(existing, 'maintenanceMarker');
+  }
+}
+
+async function stageIngressMigration(current, {
   repository,
   dataDir,
+  env,
   singBoxPath,
   execFileImpl,
   validateConfigImpl,
+  randomBytesImpl,
+  now,
+  apply,
 }) {
-  const state = policyUpgradeState(current);
-  // Revalidate even a crash-orphaned candidate against the currently installed
-  // binary before either pointer can select it.
+  const preliminary = ingressEnvironment(env);
+  let candidate = await findIngressMigrationRevision(repository, current, preliminary);
+  const websocketPath = preliminary.gateway.websocketPath
+    ?? candidate?.state.gateway.websocketPath
+    ?? generateWebSocketPath(randomBytesImpl);
+  if (candidate && env.WS_PATH && candidate.state.gateway.websocketPath !== env.WS_PATH) {
+    throw new BootstrapError('MIGRATION_CONFLICT', 'WS_PATH does not match the staged ingress migration');
+  }
+  const state = candidate?.state ?? buildIngressMigrationState(
+    current,
+    preliminary,
+    websocketPath,
+    resolveTime(now),
+  );
   await validateCandidateConfig(state, {
     dataDir,
     singBoxPath,
     execFileImpl,
     validateConfigImpl,
   });
-  let candidate = await findPolicyUpgradeRevision(repository, state);
+  if (!apply) {
+    return Object.freeze({
+      status: 'migration-dry-run',
+      id: current.id,
+      revision: current.state.revision,
+      candidateRevision: state.revision,
+    });
+  }
   if (candidate === null) {
-    const created = await repository.createRevision(state, { operation: 'policy.upgrade' });
+    const created = await repository.createRevision(state, { operation: 'ingress.migrate' });
     candidate = await repository.readRevision(created.id);
   }
+  // The immutable candidate is harmless until selected. Publish maintenance
+  // before switching the runtime pointer so subscriptions can never race the
+  // WebSocket cutover.
+  await ensureMaintenanceMarker(dataDir, resolveTime(now));
   await repository.activateRuntime(candidate.id);
-  await repository.activateCurrent(candidate.id);
-  return candidate;
+  return Object.freeze({
+    status: 'migration-staged',
+    id: candidate.id,
+    revision: candidate.state.revision,
+    previousId: current.id,
+  });
 }
 
 export async function bootstrap({
@@ -500,6 +553,7 @@ export async function bootstrap({
   randomBytesImpl = randomBytes,
   now = () => new Date(),
   migrationMode,
+  realityMigrationMode,
 } = {}) {
   const dataDir = absolutePath(env.DATA_DIR ?? '/var/lib/vpn-gateway', 'DATA_DIR');
   const repo = resolveRepository(env, dataDir, repository);
@@ -511,18 +565,24 @@ export async function bootstrap({
       await repo.cleanupInterruptedWrites?.();
       await cleanupBootstrapConfigOrphans(dataDir);
       const runtimeId = await repo.readPointer('runtime');
-      if (current.requiresPolicyUpgrade) {
-        current = await upgradePolicyRevision(current, {
+      if (current.requiresIngressMigration) {
+        const mode = realityMigrationMode ?? env.MIGRATE_REALITY ?? 'required';
+        if (!['1', 'apply', 'dry-run'].includes(mode)) {
+          throw new BootstrapError(
+            'REALITY_MIGRATION_REQUIRED',
+            'schema-v2 REALITY state requires an explicit MIGRATE_REALITY=1 cutover',
+          );
+        }
+        return stageIngressMigration(current, {
           repository: repo,
           dataDir,
+          env,
           singBoxPath: validateSingBoxPath(env.SINGBOX_BIN ?? '/usr/local/bin/sing-box'),
           execFileImpl,
           validateConfigImpl,
-        });
-        return Object.freeze({
-          status: 'upgraded',
-          id: current.id,
-          revision: current.state.revision,
+          randomBytesImpl,
+          now,
+          apply: mode === '1' || mode === 'apply',
         });
       }
       if (runtimeId !== current.id) await repo.activateRuntime(current.id);
@@ -532,23 +592,35 @@ export async function bootstrap({
         revision: current.state.revision,
       });
     }
-    let interruptedRuntime = await repo.readRuntime();
+    const interruptedRuntime = await repo.readRuntime();
     if (interruptedRuntime !== null) {
+      if (interruptedRuntime.manifest.operation === 'ingress.migrate') {
+        throw new BootstrapError(
+          'MIGRATION_AUTHORITY_LOST',
+          'staged ingress migration has no current source pointer; restore the verified schema-v2 pointer',
+        );
+      }
       await repo.activateCurrent(interruptedRuntime.id);
       await repo.cleanupInterruptedWrites?.();
       await cleanupBootstrapConfigOrphans(dataDir);
-      if (interruptedRuntime.requiresPolicyUpgrade) {
-        interruptedRuntime = await upgradePolicyRevision(interruptedRuntime, {
+      if (interruptedRuntime.requiresIngressMigration) {
+        const mode = realityMigrationMode ?? env.MIGRATE_REALITY ?? 'required';
+        if (!['1', 'apply', 'dry-run'].includes(mode)) {
+          throw new BootstrapError(
+            'REALITY_MIGRATION_REQUIRED',
+            'schema-v2 REALITY state requires an explicit MIGRATE_REALITY=1 cutover',
+          );
+        }
+        return stageIngressMigration(interruptedRuntime, {
           repository: repo,
           dataDir,
+          env,
           singBoxPath: validateSingBoxPath(env.SINGBOX_BIN ?? '/usr/local/bin/sing-box'),
           execFileImpl,
           validateConfigImpl,
-        });
-        return Object.freeze({
-          status: 'upgraded',
-          id: interruptedRuntime.id,
-          revision: interruptedRuntime.state.revision,
+          randomBytesImpl,
+          now,
+          apply: mode === '1' || mode === 'apply',
         });
       }
       return Object.freeze({
@@ -558,8 +630,6 @@ export async function bootstrap({
       });
     }
   }
-
-  await assertNoUnpointedRevision(dataDir);
 
   const expectedConfigPath = path.join(dataDir, 'runtime', 'sing-box.json');
   const configuredPath = absolutePath(env.SINGBOX_CONFIG ?? expectedConfigPath, 'SINGBOX_CONFIG');
@@ -602,6 +672,8 @@ export async function bootstrap({
     });
   }
 
+  await assertNoUnpointedRevision(dataDir);
+
   // Fresh initialization needs a private parent for the temporary semantic
   // validation file. Keep this after legacy detection so dry-run migration is
   // genuinely read-only with respect to the v2 state tree.
@@ -610,7 +682,7 @@ export async function bootstrap({
   await cleanupBootstrapConfigOrphans(dataDir);
 
   const singBoxPath = validateSingBoxPath(env.SINGBOX_BIN ?? '/usr/local/bin/sing-box');
-  const serverName = bootstrapServerName(env);
+  const ingress = ingressEnvironment(env);
   const authKeyPath = envString(env, 'TS_AUTH_KEY_FILE');
   const authKey = await readSecretFile(absolutePath(authKeyPath, 'TS_AUTH_KEY_FILE'), {
     description: 'Tailscale auth-key file',
@@ -621,30 +693,21 @@ export async function bootstrap({
       description: 'Tailscale API-key file',
     });
   }
-  const pair = await generateRealityKeyPair({ singBoxPath, execFileImpl });
   const timestamp = resolveTime(now);
   const preparedAdmin = await prepareAdminSecret(dataDir, { randomBytesImpl });
   const adminRecord = await createAdminScryptRecord(preparedAdmin.secret, { randomBytesImpl });
   const healthCredentials = generateHealthCredentials(randomBytesImpl);
   const state = validateState({
-    schemaVersion: 2,
+    schemaVersion: STATE_SCHEMA_VERSION,
     revision: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
     gateway: {
-      host: classifyHost(envString(env, 'VPS_HOST'), 'VPS_HOST'),
-      advertisedPort: envPort(env, ['ADVERTISED_PORT', 'VPN_PORT'], 443),
-      listenPort: envPort(env, ['LISTEN_PORT', 'NODE_PORT'], 443),
-      publicBaseUrl: envString(env, 'PUBLIC_BASE_URL', { required: false }),
-    },
-    reality: {
-      serverName,
-      privateKey: pair.privateKey,
-      publicKey: pair.publicKey,
-      shortId: secureRandom(8, randomBytesImpl, 'REALITY short id').toString('hex'),
+      ...ingress.gateway,
+      websocketPath: ingress.gateway.websocketPath ?? generateWebSocketPath(randomBytesImpl),
     },
     tailscale: {
-      hostname: envString(env, 'TS_HOSTNAME', { fallback: env.NODE_NAME ?? 'vps-reality' }),
+      hostname: envString(env, 'TS_HOSTNAME', { fallback: env.NODE_NAME ?? 'vps-ws' }),
       stateDirectory: absolutePath(
         env.SINGBOX_STATE_DIR ?? path.join(dataDir, 'tailscale'),
         'SINGBOX_STATE_DIR',
@@ -660,7 +723,7 @@ export async function bootstrap({
       ...healthCredentials,
       target: {
         // Exercise both exit-routed DNS and TCP connectivity during readiness.
-        host: serverName,
+        host: ingress.egressHealthHost,
         port: 443,
       },
     },
@@ -693,8 +756,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       ? 'Using'
       : result.status === 'recovered'
         ? 'Recovered'
-        : result.status === 'upgraded'
-          ? 'Upgraded'
+        : result.status === 'migration-staged'
+          ? 'Staged migration for'
+          : result.status === 'migration-dry-run'
+            ? 'Validated migration from'
           : 'Initialized';
     process.stdout.write(`${verb} VPN gateway state revision ${result.revision}.\n`);
   }).catch((error) => {

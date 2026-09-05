@@ -113,10 +113,9 @@ test('initialization completes either safe one-pointer crash state', async () =>
     const revision = await repository.createRevision(fixtureState(), { operation: 'bootstrap' });
     await repository.activateRuntime(revision.id);
     const recovered = await repository.initialize(fixtureState({
-      reality: {
-        ...fixtureState().reality,
-        privateKey: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI',
-        publicKey: 'zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVk',
+      gateway: {
+        ...fixtureState().gateway,
+        websocketPath: `/${'B'.repeat(43)}`,
       },
     }), { operation: 'bootstrap' });
     assert.equal(recovered.id, revision.id);
@@ -132,7 +131,9 @@ test('initialization completes either safe one-pointer crash state', async () =>
 test('manifest verification detects a changed revision file', async () => {
   await inTemporaryRepository(async ({ repository }) => {
     const created = await repository.createRevision(fixtureState());
-    const changed = fixtureState({ gateway: { ...fixtureState().gateway, advertisedPort: 444 } });
+    const changed = fixtureState({
+      gateway: { ...fixtureState().gateway, websocketPath: `/${'B'.repeat(43)}` },
+    });
     await writeFile(path.join(created.path, 'state.json'), `${JSON.stringify(changed, null, 2)}\n`, { mode: 0o600 });
     await assert.rejects(
       repository.readRevision(created.id),

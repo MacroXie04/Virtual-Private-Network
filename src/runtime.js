@@ -1,6 +1,7 @@
 import { execFile as execFileCallback, spawn as spawnChild } from 'node:child_process';
 import { promisify } from 'node:util';
 import { probeSocksConnect } from './health-probe.js';
+import { probeWebSocketUpgrade } from './websocket-probe.js';
 
 const execFileAsync = promisify(execFileCallback);
 
@@ -28,6 +29,7 @@ export async function validateSingBoxConfig(configPath, {
 
 export async function waitForDataPath(health, {
   probe = probeSocksConnect,
+  websocketProbe = probeWebSocketUpgrade,
   timeoutMs = 30000,
   attemptTimeoutMs = 3000,
   intervalMs = 250,
@@ -38,6 +40,13 @@ export async function waitForDataPath(health, {
   let lastError;
   do {
     try {
+      await websocketProbe({
+        connectHost: health.websocket.connectHost,
+        connectPort: health.websocket.connectPort,
+        authority: health.websocket.authority,
+        path: health.websocket.path,
+        timeoutMs: Math.min(attemptTimeoutMs, Math.max(1, deadline - now())),
+      });
       await probe({
         proxyHost: health.listenHost ?? '127.0.0.1',
         proxyPort: health.listenPort,

@@ -129,9 +129,10 @@ ${mutationFields(snapshot)}
 /** Render the authenticated, script-free administration page. */
 export function renderDashboardPage(snapshot = {}) {
   const users = Array.isArray(snapshot.users) ? snapshot.users : [];
-  const gatewayHost = hostText(snapshot.gateway?.host);
-  const gatewayPort = snapshot.gateway?.advertisedPort ?? '';
-  const publicBase = snapshot.gateway?.publicBaseUrl ?? snapshot.publicBaseUrl ?? '';
+  const gatewayHost = hostText(snapshot.gateway?.vpnPublicHostname);
+  const gatewayPort = snapshot.gateway?.publicPort ?? '';
+  const publicBase = snapshot.gateway?.subscriptionPublicBaseUrl ?? '';
+  const adminHost = hostText(snapshot.gateway?.adminPublicHostname);
   const revokedOmitted = Number.isSafeInteger(snapshot.revokedOmitted) && snapshot.revokedOmitted > 0
     ? `<p>${escapeHtml(snapshot.revokedOmitted)} older revoked records are retained in state but omitted here.</p>`
     : '';
@@ -149,10 +150,11 @@ ${hidden('csrf', snapshot.csrf)}
 </form>
 <section>
 <h2>Gateway</h2>
-<p><code>${escapeHtml(gatewayHost)}${gatewayPort ? `:${escapeHtml(gatewayPort)}` : ''}</code></p>
+<p>VPN: <code>${escapeHtml(gatewayHost)}${gatewayPort ? `:${escapeHtml(gatewayPort)}` : ''}</code></p>
+<p>Administration: <code>${escapeHtml(adminHost)}</code></p>
 <form method="post" action="/public-base">
 ${mutationFields(snapshot)}
-<label>Public subscription base URL <input name="url" type="url" maxlength="2048" value="${escapeHtml(publicBase)}" placeholder="https://subscriptions.example"></label>
+<label>Public subscription base URL <input name="url" type="url" required maxlength="2048" value="${escapeHtml(publicBase)}" placeholder="https://subscriptions.example"></label>
 <button type="submit"${mutationDisabled}>Save public URL</button>
 </form>
 </section>

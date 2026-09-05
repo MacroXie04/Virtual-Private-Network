@@ -1,13 +1,15 @@
 import {
   HEALTH_PASSWORD_BYTES,
   HEALTH_USERNAME,
+  PUBLIC_VLESS_PORT,
   SUBSCRIPTION_VIEW_SCHEMA_VERSION,
+  VLESS_LISTEN_HOST,
+  VLESS_LISTEN_PORT,
   validateState,
   validateSubscriptionView,
 } from './state-schema.js';
 import {
   ValidationError,
-  formatAuthorityHost,
   isPlainObject,
   safeYamlScalar,
 } from './validation.js';
@@ -39,50 +41,6 @@ export const BLOCKED_NON_INTERNET_CIDRS = Object.freeze([
   '2002::/16',
   '3fff::/20',
   '5f00::/16',
-  'fd7a:115c:a1e0::/48',
-]);
-
-// Exact predecessors used only by the stopped-service policy upgrader. Keeping
-// them separate prevents the compatibility path from accepting arbitrary route
-// changes while existing v2 volumes receive each narrowly reviewed deny-set
-// expansion.
-const PREVIOUS_BLOCKED_NON_INTERNET_CIDRS = Object.freeze([
-  '0.0.0.0/8',
-  '100.64.0.0/10',
-  '192.0.0.0/24',
-  '192.0.2.0/24',
-  '192.88.99.2/32',
-  '198.18.0.0/15',
-  '198.51.100.0/24',
-  '203.0.113.0/24',
-  '240.0.0.0/4',
-  '64:ff9b:1::/48',
-  '100::/64',
-  '100:0:0:1::/64',
-  '2001::/32',
-  '2001:2::/48',
-  '2001:10::/28',
-  '2001:db8::/32',
-  '2002::/16',
-  '3fff::/20',
-  '5f00::/16',
-  'fd7a:115c:a1e0::/48',
-]);
-
-const EARLIER_BLOCKED_NON_INTERNET_CIDRS = Object.freeze([
-  '0.0.0.0/8',
-  '100.64.0.0/10',
-  '192.0.0.0/24',
-  '192.0.2.0/24',
-  '198.18.0.0/15',
-  '198.51.100.0/24',
-  '203.0.113.0/24',
-  '240.0.0.0/4',
-  '64:ff9b:1::/48',
-  '100::/64',
-  '2001:10::/28',
-  '2001:db8::/32',
-  '2002::/16',
   'fd7a:115c:a1e0::/48',
 ]);
 
@@ -194,7 +152,7 @@ export function assertFailClosedConfig(value, expectedState = null) {
   }
   requireExactKeys(
     publicInbound,
-    ['type', 'tag', 'listen', 'listen_port', 'users', 'tls'],
+    ['type', 'tag', 'listen', 'listen_port', 'users', 'transport'],
     'config.inbounds.vless-in',
   );
   requireExactKeys(
@@ -223,31 +181,20 @@ export function assertFailClosedConfig(value, expectedState = null) {
   ) {
     fail('config.inbounds.health-in.users[0]', 'must contain valid SOCKS credentials');
   }
-  if (publicInbound.listen !== '::') fail('config.inbounds.vless-in.listen', 'must listen on the dual-stack socket');
+  if (publicInbound.listen !== VLESS_LISTEN_HOST || publicInbound.listen_port !== VLESS_LISTEN_PORT) {
+    fail('config.inbounds.vless-in', 'must listen only on the fixed IPv4 loopback origin');
+  }
   for (const [index, user] of publicInbound.users.entries()) {
-    requireExactKeys(user, ['name', 'uuid', 'flow'], `config.inbounds.vless-in.users[${index}]`);
-    if (typeof user.name !== 'string' || typeof user.uuid !== 'string' || user.flow !== 'xtls-rprx-vision') {
-      fail(`config.inbounds.vless-in.users[${index}]`, 'must be a VLESS Vision user');
+    requireExactKeys(user, ['name', 'uuid'], `config.inbounds.vless-in.users[${index}]`);
+    if (typeof user.name !== 'string' || typeof user.uuid !== 'string') {
+      fail(`config.inbounds.vless-in.users[${index}]`, 'must be a VLESS user without flow overrides');
     }
   }
-  requireExactKeys(publicInbound.tls, ['enabled', 'server_name', 'reality'], 'config.inbounds.vless-in.tls');
-  requireExactKeys(
-    publicInbound.tls.reality,
-    ['enabled', 'handshake', 'private_key', 'short_id'],
-    'config.inbounds.vless-in.tls.reality',
-  );
-  requireExactKeys(
-    publicInbound.tls.reality.handshake,
-    ['server', 'server_port', 'detour'],
-    'config.inbounds.vless-in.tls.reality.handshake',
-  );
-  if (publicInbound.tls.enabled !== true
-    || publicInbound.tls.reality.enabled !== true
-    || publicInbound.tls.reality.handshake.server_port !== 443
-    || publicInbound.tls.reality.handshake.detour !== TAILSCALE_ENDPOINT_TAG
-    || !Array.isArray(publicInbound.tls.reality.short_id)
-    || publicInbound.tls.reality.short_id.length !== 1) {
-    fail('config.inbounds.vless-in.tls', 'must use the expected REALITY transport');
+  requireExactKeys(publicInbound.transport, ['type', 'path'], 'config.inbounds.vless-in.transport');
+  if (publicInbound.transport.type !== 'ws'
+    || typeof publicInbound.transport.path !== 'string'
+    || !/^\/[A-Za-z0-9_-]{43,128}$/u.test(publicInbound.transport.path)) {
+    fail('config.inbounds.vless-in.transport', 'must use the canonical WebSocket path');
   }
 
   if (expectedState !== null) {
@@ -258,24 +205,19 @@ export function assertFailClosedConfig(value, expectedState = null) {
     }
     expectedUsers.forEach((user, index) => {
       const rendered = publicInbound.users[index];
-      if (rendered.name !== user.id || rendered.uuid !== user.uuid || rendered.flow !== 'xtls-rprx-vision') {
+      if (rendered.name !== user.id || rendered.uuid !== user.uuid) {
         fail(`config.inbounds.vless-in.users[${index}]`, 'does not match active state user');
       }
     });
-    if (publicInbound.listen_port !== state.gateway.listenPort
-      || healthInbound.listen_port !== state.health.listenPort) {
+    if (healthInbound.listen_port !== state.health.listenPort) {
       fail('config.inbounds', 'listen ports do not match state');
     }
     if (healthInbound.users[0].username !== state.health.username
       || healthInbound.users[0].password !== state.health.password) {
       fail('config.inbounds.health-in.users[0]', 'does not match health probe credentials');
     }
-    const reality = publicInbound.tls.reality;
-    if (publicInbound.tls.server_name !== state.reality.serverName
-      || reality.handshake.server !== state.reality.serverName
-      || reality.private_key !== state.reality.privateKey
-      || reality.short_id[0] !== state.reality.shortId) {
-      fail('config.inbounds.vless-in.tls.reality', 'does not match state');
+    if (publicInbound.transport.path !== state.gateway.websocketPath) {
+      fail('config.inbounds.vless-in.transport.path', 'does not match state');
     }
     if (endpoint.state_directory !== state.tailscale.stateDirectory
       || endpoint.hostname !== state.tailscale.hostname
@@ -289,119 +231,6 @@ export function assertFailClosedConfig(value, expectedState = null) {
   return value;
 }
 
-/**
- * Validate the immediately previous schema-v2 renderer policies: the
- * earliest lacked explicit DNS/endpoint resolvers (and sometimes the REALITY
- * detour), the next added routed DNS but not Tailnet isolation rules, and the
- * latest used the first, narrower special-use deny set.
- * This is intentionally not a renderer: it accepts only those exact shapes,
- * upgrades a clone with fixed fields, then subjects it to every current
- * semantic check. Callers may use it only for a stopped-service bootstrap
- * upgrade or post-readiness retirement.
- */
-export function assertLegacyV2Config(value, expectedState) {
-  const hasRoutedDns = isPlainObject(value) && Object.hasOwn(value, 'dns');
-  const hasIsolationRules = hasRoutedDns
-    && isPlainObject(value.route)
-    && Object.hasOwn(value.route, 'rules');
-  requireExactKeys(
-    value,
-    hasRoutedDns
-      ? ['log', 'dns', 'inbounds', 'endpoints', 'route']
-      : ['log', 'inbounds', 'endpoints', 'route'],
-    'legacyConfig',
-  );
-  requireExactKeys(
-    value.route,
-    hasIsolationRules
-      ? ['rules', 'final', 'default_domain_resolver']
-      : hasRoutedDns ? ['final', 'default_domain_resolver'] : ['final'],
-    'legacyConfig.route',
-  );
-  if (hasIsolationRules) {
-    if (!Array.isArray(value.route.rules) || value.route.rules.length !== 3) {
-      fail('legacyConfig.route.rules', 'must contain the exact predecessor isolation policy');
-    }
-    const routedInbounds = [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG];
-    const [resolveRule, privateRule, tailnetRule] = value.route.rules;
-    requireExactKeys(resolveRule, ['inbound', 'action', 'server'], 'legacyConfig.route.rules[0]');
-    requireExactKeys(privateRule, ['inbound', 'ip_is_private', 'action'], 'legacyConfig.route.rules[1]');
-    requireExactKeys(tailnetRule, ['inbound', 'ip_cidr', 'action'], 'legacyConfig.route.rules[2]');
-    if (!sameArray(resolveRule.inbound, routedInbounds)
-      || resolveRule.action !== 'resolve'
-      || resolveRule.server !== EXIT_DNS_TAG
-      || !sameArray(privateRule.inbound, routedInbounds)
-      || privateRule.ip_is_private !== true
-      || privateRule.action !== 'reject'
-      || !sameArray(tailnetRule.inbound, routedInbounds)
-      || !(sameArray(tailnetRule.ip_cidr, PREVIOUS_BLOCKED_NON_INTERNET_CIDRS)
-        || sameArray(tailnetRule.ip_cidr, EARLIER_BLOCKED_NON_INTERNET_CIDRS))
-      || tailnetRule.action !== 'reject') {
-      fail('legacyConfig.route.rules', 'must contain the exact predecessor isolation policy');
-    }
-  }
-  if (!Array.isArray(value.endpoints) || value.endpoints.length !== 1) {
-    fail('legacyConfig.endpoints', 'must contain exactly one endpoint');
-  }
-  const [endpoint] = value.endpoints;
-  requireExactKeys(
-    endpoint,
-    endpoint && Object.hasOwn(endpoint, 'auth_key')
-      ? [
-        'type', 'tag', 'state_directory', 'hostname', 'exit_node', 'ephemeral',
-        ...(hasRoutedDns ? ['domain_resolver'] : []), 'auth_key',
-      ]
-      : [
-        'type', 'tag', 'state_directory', 'hostname', 'exit_node', 'ephemeral',
-        ...(hasRoutedDns ? ['domain_resolver'] : []),
-      ],
-    'legacyConfig.endpoints[0]',
-  );
-  if (!Array.isArray(value.inbounds)) fail('legacyConfig.inbounds', 'must be an array');
-  const publicInbound = value.inbounds.find((inbound) => inbound?.tag === PUBLIC_INBOUND_TAG);
-  const handshake = publicInbound?.tls?.reality?.handshake;
-  const handshakeKeys = isPlainObject(handshake) && Object.hasOwn(handshake, 'detour')
-    ? ['server', 'server_port', 'detour']
-    : ['server', 'server_port'];
-  requireExactKeys(handshake, handshakeKeys, 'legacyConfig.inbounds.vless-in.tls.reality.handshake');
-  if (hasRoutedDns && !Object.hasOwn(handshake, 'detour')) {
-    fail('legacyConfig.inbounds.vless-in.tls.reality.handshake', 'routed-DNS policy must include the REALITY detour');
-  }
-
-  const upgraded = structuredClone(value);
-  if (!hasRoutedDns) {
-    upgraded.dns = {
-      servers: [
-        { type: 'local', tag: BOOTSTRAP_DNS_TAG },
-        {
-          type: 'udp',
-          tag: EXIT_DNS_TAG,
-          server: EXIT_DNS_SERVER,
-          server_port: 53,
-          detour: TAILSCALE_ENDPOINT_TAG,
-        },
-      ],
-      final: EXIT_DNS_TAG,
-    };
-    upgraded.endpoints[0].domain_resolver = BOOTSTRAP_DNS_TAG;
-    upgraded.route.default_domain_resolver = EXIT_DNS_TAG;
-    upgraded.inbounds
-      .find((inbound) => inbound?.tag === PUBLIC_INBOUND_TAG)
-      .tls.reality.handshake.detour = TAILSCALE_ENDPOINT_TAG;
-  }
-  upgraded.route.rules = [
-    { inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG], action: 'resolve', server: EXIT_DNS_TAG },
-    { inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG], ip_is_private: true, action: 'reject' },
-    {
-      inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG],
-      ip_cidr: [...BLOCKED_NON_INTERNET_CIDRS],
-      action: 'reject',
-    },
-  ];
-  assertFailClosedConfig(upgraded, expectedState);
-  return value;
-}
-
 export function renderSingBoxConfig(value) {
   const state = validateState(value);
   const activeUsers = state.users
@@ -409,7 +238,6 @@ export function renderSingBoxConfig(value) {
     .map((user) => ({
       name: user.id,
       uuid: user.uuid,
-      flow: 'xtls-rprx-vision',
     }));
   const endpoint = {
     type: 'tailscale',
@@ -442,25 +270,12 @@ export function renderSingBoxConfig(value) {
       {
         type: 'vless',
         tag: PUBLIC_INBOUND_TAG,
-        listen: '::',
-        listen_port: state.gateway.listenPort,
+        listen: VLESS_LISTEN_HOST,
+        listen_port: VLESS_LISTEN_PORT,
         users: activeUsers,
-        tls: {
-          enabled: true,
-          server_name: state.reality.serverName,
-          reality: {
-            enabled: true,
-            handshake: {
-              server: state.reality.serverName,
-              server_port: 443,
-              // REALITY forwards unauthenticated camouflage connections to
-              // this server. Pin that auxiliary dial to the same Tailscale
-              // endpoint so it cannot become a direct VPS-egress exception.
-              detour: TAILSCALE_ENDPOINT_TAG,
-            },
-            private_key: state.reality.privateKey,
-            short_id: [state.reality.shortId],
-          },
+        transport: {
+          type: 'ws',
+          path: state.gateway.websocketPath,
         },
       },
       {
@@ -506,13 +321,10 @@ export function buildSubscriptionView(value) {
     schemaVersion: SUBSCRIPTION_VIEW_SCHEMA_VERSION,
     revision: state.revision,
     gateway: {
-      host: state.gateway.host,
-      advertisedPort: state.gateway.advertisedPort,
-    },
-    reality: {
-      serverName: state.reality.serverName,
-      publicKey: state.reality.publicKey,
-      shortId: state.reality.shortId,
+      vpnPublicHostname: state.gateway.vpnPublicHostname,
+      subscriptionPublicHostname: new URL(state.gateway.subscriptionPublicBaseUrl).hostname,
+      port: PUBLIC_VLESS_PORT,
+      websocketPath: state.gateway.websocketPath,
     },
     users: state.users
       .filter((user) => user.status === 'active')
@@ -527,7 +339,7 @@ export function buildSubscriptionView(value) {
 
 function resolveConnection(value, selector) {
   let source;
-  if (value?.schemaVersion === 2) {
+  if (value?.schemaVersion === 3) {
     const state = validateState(value);
     source = buildSubscriptionView(state);
   } else {
@@ -539,11 +351,9 @@ function resolveConnection(value, selector) {
   return {
     uuid: user.uuid,
     name: user.displayName,
-    host: source.gateway.host,
-    port: source.gateway.advertisedPort,
-    serverName: source.reality.serverName,
-    publicKey: source.reality.publicKey,
-    shortId: source.reality.shortId,
+    host: source.gateway.vpnPublicHostname,
+    port: source.gateway.port,
+    websocketPath: source.gateway.websocketPath,
   };
 }
 
@@ -551,16 +361,13 @@ export function renderVlessLink(value, selector) {
   const config = resolveConnection(value, selector);
   const query = new URLSearchParams({
     encryption: 'none',
-    flow: 'xtls-rprx-vision',
-    security: 'reality',
-    sni: config.serverName,
-    fp: 'chrome',
-    pbk: config.publicKey,
-    sid: config.shortId,
-    type: 'tcp',
+    security: 'tls',
+    sni: config.host,
+    type: 'ws',
+    host: config.host,
+    path: config.websocketPath,
   });
-  const authority = formatAuthorityHost(config.host, 'gateway.host');
-  return `vless://${config.uuid}@${authority}:${config.port}?${query}#${encodeURIComponent(config.name)}`;
+  return `vless://${config.uuid}@${config.host}:${config.port}?${query}#${encodeURIComponent(config.name)}`;
 }
 
 export function renderSingBoxClientConfig(value, selector) {
@@ -576,19 +383,17 @@ export function renderSingBoxClientConfig(value, selector) {
     outbounds: [{
       type: 'vless',
       tag: 'proxy',
-      server: config.host.value,
+      server: config.host,
       server_port: config.port,
       uuid: config.uuid,
-      flow: 'xtls-rprx-vision',
       tls: {
         enabled: true,
-        server_name: config.serverName,
-        utls: { enabled: true, fingerprint: 'chrome' },
-        reality: {
-          enabled: true,
-          public_key: config.publicKey,
-          short_id: config.shortId,
-        },
+        server_name: config.host,
+      },
+      transport: {
+        type: 'ws',
+        path: config.websocketPath,
+        headers: { Host: config.host },
       },
     }],
     route: { final: 'proxy' },
@@ -605,18 +410,17 @@ log-level: info
 proxies:
   - name: ${quote(config.name)}
     type: vless
-    server: ${quote(config.host.value)}
+    server: ${quote(config.host)}
     port: ${config.port}
     uuid: ${quote(config.uuid)}
-    network: tcp
+    network: ws
     udp: true
     tls: true
-    flow: xtls-rprx-vision
-    servername: ${quote(config.serverName)}
-    client-fingerprint: chrome
-    reality-opts:
-      public-key: ${quote(config.publicKey)}
-      short-id: ${quote(config.shortId)}
+    servername: ${quote(config.host)}
+    ws-opts:
+      path: ${quote(config.websocketPath)}
+      headers:
+        Host: ${quote(config.host)}
 proxy-groups:
   - name: PROXY
     type: select

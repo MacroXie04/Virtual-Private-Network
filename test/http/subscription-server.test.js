@@ -14,7 +14,10 @@ function tokenHash(token) {
 
 function request(address, requestPath, { method = 'GET', headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: address.port, path: requestPath, method, headers }, (res) => {
+    const req = http.request({
+      host: '127.0.0.1', port: address.port, path: requestPath, method,
+      headers: { Host: 'sub.example.com', ...headers },
+    }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -26,13 +29,13 @@ function request(address, requestPath, { method = 'GET', headers = {} } = {}) {
 
 function projection(token, displayName = 'Alice') {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
-    gateway: { host: { kind: 'ipv6', value: '2001:db8::10' }, advertisedPort: 443 },
-    reality: {
-      serverName: 'www.example.com',
-      publicKey: 'jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0',
-      shortId: '01ab',
+    gateway: {
+      vpnPublicHostname: 'vpn.example.com',
+      subscriptionPublicHostname: 'sub.example.com',
+      port: 443,
+      websocketPath: `/${'A'.repeat(43)}`,
     },
     users: [{
       id: 'alice',
@@ -60,7 +63,7 @@ test('subscription server exposes only explicit token routes with identical abse
   const mixed = await request(address, `/s/${token}`);
   assert.equal(mixed.status, 200);
   assert.match(Buffer.from(mixed.body.toString(), 'base64').toString(), /^vless:\/\//u);
-  assert.match(Buffer.from(mixed.body.toString(), 'base64').toString(), /@\[2001:db8::10\]:443/u);
+  assert.match(Buffer.from(mixed.body.toString(), 'base64').toString(), /@vpn\.example\.com:443/u);
   assert.equal(mixed.headers['cache-control'], 'no-store');
 
   const links = await request(address, `/s/${token}/links`);
@@ -72,7 +75,7 @@ test('subscription server exposes only explicit token routes with identical abse
   assert.equal(head.headers['content-length'], links.headers['content-length']);
 
   const singBox = await request(address, `/s/${token}/sing-box`);
-  assert.equal(JSON.parse(singBox.body).outbounds[0].server, '2001:db8::10');
+  assert.equal(JSON.parse(singBox.body).outbounds[0].server, 'vpn.example.com');
   const clash = await request(address, `/s/${token}/clash`);
   assert.match(clash.body.toString(), /name: "Alice: # one"/u);
 
@@ -84,6 +87,9 @@ test('subscription server exposes only explicit token routes with identical abse
   assert.equal((await request(address, '/admin')).status, 404);
   assert.equal((await request(address, `/s/${token}/links`, { method: 'POST' })).status, 404);
   assert.equal((await request(address, `/s/${token}/links?format=other`)).status, 404);
+  assert.equal((await request(address, `/s/${token}/links`, {
+    headers: { Host: 'vpn.example.com', 'x-forwarded-host': 'sub.example.com' },
+  })).status, 404);
 });
 
 test('subscription server rereads the projection for every request', async (t) => {

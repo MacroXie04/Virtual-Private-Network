@@ -27,6 +27,7 @@ services:
       CONTROLLER_SOCKET: /run/vpn-gateway/controller.sock
       SUPERVISE: "1"
       MIGRATE_LEGACY: "${MIGRATE_LEGACY:-}"
+      MIGRATE_REALITY: "${MIGRATE_REALITY:-}"
       TS_AUTH_KEY_FILE: /run/secrets/tailscale-auth-key
       TS_API_KEY_FILE: "${TS_API_KEY_FILE:+/run/secrets/tailscale-api-key}"
       SINGBOX_BIN: /usr/local/bin/sing-box
@@ -38,22 +39,19 @@ services:
       SUB_GID: "11001"
       ADMIN_UID: "11002"
       ADMIN_GID: "11002"
+      NODE_HOST: 127.0.0.1
       NODE_PORT: "8443"
-      SUB_HOST: 0.0.0.0
+      SUB_HOST: 127.0.0.1
       SUB_PORT: "8080"
-      ADMIN_HOST: 0.0.0.0
+      ADMIN_HOST: 127.0.0.1
       ADMIN_PORT: "8081"
-      ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-admin.vpn.invalid:8444}
-      ADMIN_ALLOWED_ORIGINS: ${ADMIN_ALLOWED_ORIGINS:-https://admin.vpn.invalid:8444}
+      VPN_PUBLIC_HOSTNAME: ${VPN_PUBLIC_HOSTNAME:?Set VPN_PUBLIC_HOSTNAME in .env}
+      SUBSCRIPTION_PUBLIC_BASE_URL: ${SUBSCRIPTION_PUBLIC_BASE_URL:?Set SUBSCRIPTION_PUBLIC_BASE_URL in .env}
+      ADMIN_PUBLIC_HOSTNAME: ${ADMIN_PUBLIC_HOSTNAME:?Set ADMIN_PUBLIC_HOSTNAME in .env}
+      WS_PATH: "${WS_PATH:-}"
+      EGRESS_HEALTH_HOST: ${EGRESS_HEALTH_HOST:?Set EGRESS_HEALTH_HOST in .env}
       EXIT_NODE: ${EXIT_NODE:?Set EXIT_NODE in .env}
-      VPS_HOST: ${VPS_HOST:?Set VPS_HOST in .env}
-      SERVER_NAME: ${SERVER_NAME:?Set SERVER_NAME in .env}
-      NODE_NAME: ${NODE_NAME:-vps-reality}
-      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
-    ports:
-      - "443:8443/tcp"
-      - "127.0.0.1:8080:8080/tcp"
-      - "127.0.0.1:8081:8081/tcp"
+      NODE_NAME: ${NODE_NAME:-vps-cloudflare}
     volumes:
       - type: volume
         source: vpn-data
@@ -79,6 +77,53 @@ services:
       test: ["CMD", "node", "/app/src/healthcheck.js"]
       interval: 30s
       timeout: 10s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+        compress: "true"
+
+  cloudflared:
+    build:
+      context: .
+      dockerfile: docker/cloudflared.Dockerfile
+    image: vpn-cloudflared:local
+    restart: unless-stopped
+    # The launcher starts as root only long enough to open and validate the
+    # root-only token, then irrevocably execs cloudflared as 65532:65532.
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETPCAP
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    stop_grace_period: 45s
+    network_mode: "service:vpn-gateway"
+    depends_on:
+      vpn-gateway:
+        condition: service_started
+        restart: true
+    volumes:
+      - type: bind
+        source: ${CLOUDFLARE_TUNNEL_TOKEN_FILE:?Set CLOUDFLARE_TUNNEL_TOKEN_FILE in .env}
+        target: /run/secrets/cloudflare-tunnel-token
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=4m,mode=1777,nosuid,nodev,noexec
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cloudflared-guard", "ready"]
+      interval: 30s
+      timeout: 5s
       start_period: 20s
       retries: 3
     logging:

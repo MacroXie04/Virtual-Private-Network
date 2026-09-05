@@ -11,7 +11,10 @@ test('admin pages are script-free and escape all state values', () => {
   const page = renderDashboardPage({
     revision: 4,
     csrf: 'csrf<&"',
-    gateway: { host: { kind: 'dns', value: '<gateway>' }, advertisedPort: 443 },
+    gateway: {
+      vpnPublicHostname: '<gateway>', publicPort: 443,
+      subscriptionPublicBaseUrl: 'https://sub.example.com', adminPublicHostname: '<admin>',
+    },
     ready: true,
     users: [{ id: 'user-one', displayName: '<img src=x onerror=alert(1)>', status: 'active' }],
     exitNodes: [{ deviceId: 'exit-one', name: '<script>alert(1)</script>' }],
@@ -64,7 +67,10 @@ test('degraded dashboard permits only an exit-node repair mutation', () => {
     revision: 3,
     csrf: 'csrf',
     ready: false,
-    gateway: { host: { kind: 'dns', value: 'vpn.example' }, advertisedPort: 443 },
+    gateway: {
+      vpnPublicHostname: 'vpn.example.com', publicPort: 443,
+      subscriptionPublicBaseUrl: 'https://sub.example.com', adminPublicHostname: 'admin.example.com',
+    },
     exitDirectoryAvailable: true,
     exitNodes: [{ deviceId: 'exit-one', name: 'Repair exit' }],
     users: [{ id: 'user-one', displayName: 'Alice', status: 'active' }],

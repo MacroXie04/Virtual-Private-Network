@@ -7,3 +7,5 @@
 !docker/
 !docker/Dockerfile
 !docker/entrypoint.sh
+!docker/cloudflared.Dockerfile
+!docker/cloudflared-guard.go

@@ -16,6 +16,15 @@ if [ "$DATA_ROOT" != /data ] || [ "$SOCKET_ROOT" != /run/vpn-gateway ]; then
   echo "The container requires DATA_DIR=/data and CONTROLLER_SOCKET below /run/vpn-gateway." >&2
   exit 1
 fi
+if [ "${NODE_HOST:-127.0.0.1}" != 127.0.0.1 ] \
+    || [ "${NODE_PORT:-8443}" != 8443 ] \
+    || [ "${SUB_HOST:-127.0.0.1}" != 127.0.0.1 ] \
+    || [ "${SUB_PORT:-8080}" != 8080 ] \
+    || [ "${ADMIN_HOST:-127.0.0.1}" != 127.0.0.1 ] \
+    || [ "${ADMIN_PORT:-8081}" != 8081 ]; then
+  echo "Container listeners must use the fixed loopback-only Cloudflare Tunnel origins." >&2
+  exit 1
+fi
 
 assert_identity() {
   name="$1"
