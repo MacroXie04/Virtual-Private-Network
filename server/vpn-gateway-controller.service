@@ -20,7 +20,7 @@ Environment=SINGBOX_CONFIG=/var/lib/vpn-gateway/runtime/sing-box.json
 Environment=SINGBOX_STATE_DIR=/var/lib/vpn-gateway/tailscale
 Environment=SINGBOX_SERVICE=vpn-gateway-sing-box.service
 Environment=SUPERVISE=0
-Environment=NODE_PORT=443
+Environment=NODE_PORT=8443
 Environment=SINGBOX_UID=11000
 Environment=SINGBOX_GID=11000
 Environment=SUB_UID=11001
@@ -34,7 +34,7 @@ RuntimeDirectory=vpn-gateway
 RuntimeDirectoryMode=0751
 ExecStartPre=/usr/bin/env node /opt/vpn-gateway/src/bootstrap.js
 ExecStart=/usr/bin/env node /opt/vpn-gateway/src/controller-server.js
-ExecStartPost=/usr/bin/systemctl --no-block start vpn-gateway-subscription.service vpn-gateway-admin.service
+ExecStartPost=/usr/bin/systemctl --no-block start vpn-gateway-subscription.service vpn-gateway-admin.service vpn-gateway-tunnel.service
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=330s

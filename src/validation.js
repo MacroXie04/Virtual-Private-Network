@@ -1,8 +1,3 @@
-import {
-  createPrivateKey,
-  createPublicKey,
-  timingSafeEqual,
-} from 'node:crypto';
 import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
 
@@ -136,26 +131,102 @@ export function formatAuthorityHost(host, path = 'host') {
 }
 
 export function validatePublicBaseUrl(value, path = 'publicBaseUrl') {
-  if (value === null) return null;
+  return validateSubscriptionPublicBaseUrl(value, path);
+}
+
+/** A public Tunnel route must be one canonical, multi-label DNS hostname. */
+export function validatePublicDnsHostname(value, path = 'hostname') {
+  const raw = expectString(value, path, { min: 3, max: 253 });
+  if (
+    raw !== raw.trim()
+    || raw.endsWith('.')
+    || raw.startsWith('[')
+    || raw.endsWith(']')
+    || isIP(raw) !== 0
+  ) {
+    throw new ValidationError(path, 'must be an unbracketed public DNS hostname without a trailing dot');
+  }
+  const hostname = normalizeDns(raw, path);
+  if (
+    isIP(hostname) !== 0
+    || !hostname.includes('.')
+    || hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+  ) {
+    throw new ValidationError(path, 'must be a multi-label public DNS hostname');
+  }
+  return hostname;
+}
+
+/** The subscription origin has no path or alternate port: Cloudflare serves it on HTTPS 443. */
+export function validateSubscriptionPublicBaseUrl(value, path = 'subscriptionPublicBaseUrl') {
   const raw = expectString(value, path, { min: 9, max: 2048 });
-  if (raw !== raw.trim() || /%(?:0[0-9a-f]|1[0-9a-f]|2e|2f|5c|7f)/iu.test(raw) || raw.includes('\\')) {
-    throw new ValidationError(path, 'contains an unsafe encoded character or separator');
+  if (
+    raw !== raw.trim()
+    || raw.includes('\\')
+    || raw.endsWith('/')
+    || !/^https:\/\/[^/]+$/iu.test(raw)
+  ) {
+    throw new ValidationError(path, 'must be an HTTPS origin without a path');
   }
   let parsed;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new ValidationError(path, 'must be an absolute URL');
+    throw new ValidationError(path, 'must be an absolute HTTPS origin');
   }
   if (parsed.protocol !== 'https:') throw new ValidationError(path, 'must use https');
   if (parsed.username || parsed.password) throw new ValidationError(path, 'must not contain credentials');
   if (parsed.search || parsed.hash) throw new ValidationError(path, 'must not contain a query or fragment');
-  if (parsed.port && parsed.port !== '443') throw new ValidationError(path, 'must use port 443');
-  const urlHost = parsed.hostname.startsWith('[') ? parsed.hostname.slice(1, -1) : parsed.hostname;
-  classifyHost(urlHost, `${path}.host`);
-  if (parsed.pathname.includes('//')) throw new ValidationError(path, 'must not contain empty path segments');
-  const pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/u, '');
-  return `${parsed.origin}${pathname}`;
+  if (parsed.pathname !== '/') throw new ValidationError(path, 'must not contain a path');
+  const hostname = validatePublicDnsHostname(parsed.hostname, `${path}.hostname`);
+  const authority = raw.slice('https://'.length);
+  if (authority.toLowerCase() !== hostname) {
+    throw new ValidationError(path, 'must not contain an explicit port or non-canonical authority');
+  }
+  return `https://${hostname}`;
+}
+
+export function validateWebSocketPath(value, path = 'websocketPath') {
+  const websocketPath = expectString(value, path, { min: 44, max: 129 });
+  if (!/^\/[A-Za-z0-9_-]{43,128}$/u.test(websocketPath)) {
+    throw new ValidationError(
+      path,
+      'must be one absolute URL-safe segment containing 43 to 128 characters',
+    );
+  }
+  return websocketPath;
+}
+
+export function validatePublicIngressSettings(value, path = 'gateway') {
+  const gateway = expectExactKeys(value, [
+    'vpnPublicHostname',
+    'subscriptionPublicBaseUrl',
+    'adminPublicHostname',
+    'websocketPath',
+  ], path);
+  const vpnPublicHostname = validatePublicDnsHostname(
+    gateway.vpnPublicHostname,
+    `${path}.vpnPublicHostname`,
+  );
+  const subscriptionPublicBaseUrl = validateSubscriptionPublicBaseUrl(
+    gateway.subscriptionPublicBaseUrl,
+    `${path}.subscriptionPublicBaseUrl`,
+  );
+  const subscriptionHostname = new URL(subscriptionPublicBaseUrl).hostname;
+  const adminPublicHostname = validatePublicDnsHostname(
+    gateway.adminPublicHostname,
+    `${path}.adminPublicHostname`,
+  );
+  if (new Set([vpnPublicHostname, subscriptionHostname, adminPublicHostname]).size !== 3) {
+    throw new ValidationError(path, 'VPN, subscription, and administration hostnames must be distinct');
+  }
+  return {
+    vpnPublicHostname,
+    subscriptionPublicBaseUrl,
+    adminPublicHostname,
+    websocketPath: validateWebSocketPath(gateway.websocketPath, `${path}.websocketPath`),
+  };
 }
 
 export function normalizeDisplayName(value, path = 'displayName') {
@@ -166,67 +237,6 @@ export function normalizeDisplayName(value, path = 'displayName') {
     throw new ValidationError(path, 'must not contain invisible formatting or line-separator characters');
   }
   return name;
-}
-
-export function validateShortId(value, path = 'shortId') {
-  const shortId = expectString(value, path, { min: 2, max: 16 }).toLowerCase();
-  if (!/^(?:[0-9a-f]{2}){1,8}$/u.test(shortId)) {
-    throw new ValidationError(path, 'must contain 1 to 8 bytes of hexadecimal data');
-  }
-  return shortId;
-}
-
-export function validateKeyMaterial(value, path) {
-  const key = expectString(value, path, { min: 1, max: 256 });
-  if (!/^[A-Za-z0-9_-]{43}$/u.test(key)) {
-    throw new ValidationError(path, 'must be a canonical unpadded base64url X25519 key');
-  }
-  const decoded = Buffer.from(key, 'base64url');
-  if (decoded.length !== 32 || decoded.toString('base64url') !== key) {
-    throw new ValidationError(path, 'must encode exactly 32 bytes');
-  }
-  return key;
-}
-
-const X25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
-const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
-
-/** Derive the REALITY/X25519 public key from its canonical raw private key. */
-export function deriveRealityPublicKey(value, path = 'privateKey') {
-  const privateKey = validateKeyMaterial(value, path);
-  try {
-    const key = createPrivateKey({
-      key: Buffer.concat([X25519_PKCS8_PREFIX, Buffer.from(privateKey, 'base64url')]),
-      format: 'der',
-      type: 'pkcs8',
-    });
-    const spki = createPublicKey(key).export({ format: 'der', type: 'spki' });
-    if (
-      !Buffer.isBuffer(spki)
-      || spki.length !== X25519_SPKI_PREFIX.length + 32
-      || !timingSafeEqual(spki.subarray(0, X25519_SPKI_PREFIX.length), X25519_SPKI_PREFIX)
-    ) {
-      throw new Error('unexpected public key encoding');
-    }
-    return spki.subarray(X25519_SPKI_PREFIX.length).toString('base64url');
-  } catch (error) {
-    if (error instanceof ValidationError) throw error;
-    throw new ValidationError(path, 'must be a valid X25519 private key');
-  }
-}
-
-export function validateRealityKeyPair(privateValue, publicValue, {
-  privatePath = 'privateKey',
-  publicPath = 'publicKey',
-} = {}) {
-  const privateKey = validateKeyMaterial(privateValue, privatePath);
-  const publicKey = validateKeyMaterial(publicValue, publicPath);
-  const derived = Buffer.from(deriveRealityPublicKey(privateKey, privatePath), 'base64url');
-  const supplied = Buffer.from(publicKey, 'base64url');
-  if (!timingSafeEqual(derived, supplied)) {
-    throw new ValidationError(publicPath, 'must correspond to the configured X25519 private key');
-  }
-  return { privateKey, publicKey };
 }
 
 export function validateTokenHash(value, path = 'tokenHash') {

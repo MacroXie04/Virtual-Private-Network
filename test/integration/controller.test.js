@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -46,21 +46,15 @@ async function fixture({
     randomBytesImpl: () => Buffer.alloc(16, 7),
   });
   const state = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     gateway: {
-      host: { kind: 'dns', value: 'vpn.example.com' },
-      advertisedPort: 443,
-      listenPort: 8443,
-      publicBaseUrl: 'https://subscriptions.example.com',
-    },
-    reality: {
-      serverName: 'www.microsoft.com',
-      privateKey: 'UuMBgl7MXTPx9inmQp2UC7Jcnwc6XYbwDNebonM-FCc', // gitleaks:allow -- deterministic test vector
-      publicKey: 'jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0',
-      shortId: '0123456789abcdef',
+      vpnPublicHostname: 'vpn.example.com',
+      subscriptionPublicBaseUrl: 'https://subscriptions.example.com',
+      adminPublicHostname: 'admin.example.com',
+      websocketPath: `/${'A'.repeat(43)}`,
     },
     tailscale: {
       hostname: 'proxy-vps',
@@ -73,7 +67,7 @@ async function fixture({
       listenPort: 19080,
       username: 'vpn-health',
       password: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
-      target: { host: 'www.microsoft.com', port: 443 },
+      target: { host: 'health.example.net', port: 443 },
     },
     admin: { scrypt: admin },
     users: [],
@@ -117,6 +111,35 @@ test('first routed recovery retires bootstrap credentials and their revision', a
   assert.equal(runtime.restarts, 2);
   assert.equal(controller.ready, true);
   await assertMarkerMissing(dataDir);
+});
+
+test('outer deployment journals block repository mutations until installer commit', async () => {
+  const { controller, repository, dataDir } = await fixture();
+  await controller.recover();
+  const session = controller.sessions.issue();
+  for (const [index, markerName] of [
+    '.legacy-migration-in-progress',
+    '.upgrade-restart-in-progress',
+    '.upgrade-rollback-in-progress',
+  ].entries()) {
+    const markerPath = path.join(dataDir, markerName);
+    await writeFile(markerPath, 'pending\n', { mode: 0o600 });
+    await assert.rejects(controller.dispatch(request(`blocked-before-commit-${index}`, 'user.create', {
+      sessionId: session.sessionId,
+      csrf: session.csrf,
+      expectedRevision: 0,
+      displayName: 'Must Not Commit',
+    })), (error) => error.code === 'DEPLOYMENT_NOT_COMMITTED' && error.status === 503);
+    assert.equal((await repository.readCurrent()).state.revision, 0);
+    await unlink(markerPath);
+  }
+  const created = await controller.dispatch(request('allowed-after-commit', 'user.create', {
+    sessionId: session.sessionId,
+    csrf: session.csrf,
+    expectedRevision: 0,
+    displayName: 'Committed User',
+  }));
+  assert.equal(created.revision, 1);
 });
 
 test('credential-revision deletion is fail-closed and retries after an interrupted scrub', async () => {

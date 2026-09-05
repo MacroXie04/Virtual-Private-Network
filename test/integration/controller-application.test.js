@@ -39,6 +39,7 @@ async function setup() {
     SINGBOX_GID: String(process.getgid?.() ?? 0),
     SUB_GID: String(process.getgid?.() ?? 0),
     ADMIN_GID: String(process.getgid?.() ?? 0),
+    ADMIN_PUBLIC_HOSTNAME: 'admin.example.com',
     SUPERVISE: '0',
   };
   return { parent, dataDir, socketPath, repository, env };
@@ -83,6 +84,36 @@ test('the recurring data-path watchdog makes every failed probe fail closed', as
 
   authority.dispatch = async () => ({ status: 'ok' });
   assert.equal(await runDataPathWatchdog(authority), true);
+});
+
+test('controller requires ADMIN_PUBLIC_HOSTNAME to match canonical state', async (t) => {
+  const fixture = await setup();
+  t.after(() => rm(fixture.parent, { recursive: true, force: true }));
+  const authority = {
+    sessions: { destroyAll() {} },
+    markUnready() {},
+    async recover() {},
+    async dispatch() { return {}; },
+  };
+  const options = {
+    repository: fixture.repository,
+    runtime: {},
+    controller: authority,
+    socketUid: null,
+  };
+  const missing = { ...fixture.env };
+  delete missing.ADMIN_PUBLIC_HOSTNAME;
+  await assert.rejects(
+    createControllerApplication({ ...options, env: missing }),
+    /ADMIN_PUBLIC_HOSTNAME/u,
+  );
+  await assert.rejects(
+    createControllerApplication({
+      ...options,
+      env: { ...fixture.env, ADMIN_PUBLIC_HOSTNAME: 'other.example.com' },
+    }),
+    /must match canonical gateway state/u,
+  );
 });
 
 test('controller publishes its socket only after runtime recovery succeeds', async (t) => {

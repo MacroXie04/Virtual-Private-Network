@@ -17,21 +17,15 @@ export function fixtureUser(overrides = {}) {
 
 export function fixtureState(overrides = {}) {
   const state = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     createdAt: FIXTURE_TIME,
     updatedAt: FIXTURE_TIME,
     gateway: {
-      host: { kind: 'dns', value: 'vpn.example.com' },
-      advertisedPort: 443,
-      listenPort: 443,
-      publicBaseUrl: 'https://vpn.example.com/subscriptions',
-    },
-    reality: {
-      serverName: 'www.example.com',
-      privateKey: 'UuMBgl7MXTPx9inmQp2UC7Jcnwc6XYbwDNebonM-FCc', // gitleaks:allow -- deterministic test vector
-      publicKey: 'jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0',
-      shortId: 'a1b2c3d4',
+      vpnPublicHostname: 'vpn.example.com',
+      subscriptionPublicBaseUrl: 'https://sub.example.com',
+      adminPublicHostname: 'admin.example.com',
+      websocketPath: '/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     },
     tailscale: {
       hostname: 'vpn-gateway',
@@ -44,7 +38,7 @@ export function fixtureState(overrides = {}) {
       listenPort: 19080,
       username: 'vpn-health',
       password: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
-      target: { host: 'www.example.com', port: 443 },
+      target: { host: 'health.example.net', port: 443 },
     },
     admin: {
       scrypt: {

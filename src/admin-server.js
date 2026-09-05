@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { isIP } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { createControlClient, ControlError } from './control-client.js';
 import {
@@ -22,6 +21,7 @@ import {
   renderLoginPage,
   renderSecretPage,
 } from './admin-page.js';
+import { validatePublicDnsHostname } from './validation.js';
 
 const SESSION_COOKIE = '__Host-vpn_admin_session';
 const LOGIN_CSRF_COOKIE = '__Host-vpn_admin_login_csrf';
@@ -32,43 +32,12 @@ const USER_ROTATE_ROUTE = new RegExp(`^/users/(${IDENTIFIER})/rotate-token$`, 'u
 const USER_ROTATE_CREDENTIALS_ROUTE = new RegExp(`^/users/(${IDENTIFIER})/rotate-credentials$`, 'u');
 const USER_EXPORT_ROUTE = new RegExp(`^/users/(${IDENTIFIER})/export$`, 'u');
 
-function listSetting(value, fallback) {
-  const values = value === undefined
-    ? fallback
-    : (typeof value === 'string' ? value.split(',').map((item) => item.trim()).filter(Boolean) : [...value]);
-  if (!Array.isArray(values) || values.length === 0) throw new TypeError('allowlist must not be empty');
-  for (const item of values) {
-    if (typeof item !== 'string' || item.length > 512 || /[\u0000-\u0020\u007f]/u.test(item)) {
-      throw new TypeError('invalid allowlist entry');
-    }
-  }
-  return new Set(values);
-}
-
 function canonicalAdminAuthority(value) {
-  let parsed;
   try {
-    parsed = new URL(`http://${value}`);
+    return validatePublicDnsHostname(value, 'ADMIN_PUBLIC_HOSTNAME');
   } catch {
-    throw new TypeError('invalid administration Host allowlist entry');
-  }
-  const hostname = parsed.hostname.toLowerCase();
-  if (
-    parsed.username
-    || parsed.password
-    || parsed.pathname !== '/'
-    || parsed.search
-    || parsed.hash
-    || value.toLowerCase() !== parsed.host
-    || isIP(hostname) !== 0
-    || hostname === 'localhost'
-    || hostname.endsWith('.localhost')
-    || !hostname.includes('.')
-    || hostname.endsWith('.')
-  ) {
     throw new TypeError('administration requires a dedicated DNS hostname');
   }
-  return parsed.host;
 }
 
 function canonicalAdminOrigin(value) {
@@ -89,10 +58,11 @@ function canonicalAdminOrigin(value) {
   ) {
     throw new TypeError('invalid administration Origin allowlist entry');
   }
-  return {
-    origin: parsed.origin,
-    host: canonicalAdminAuthority(parsed.host),
-  };
+  const host = canonicalAdminAuthority(parsed.hostname);
+  if (parsed.port || parsed.origin !== `https://${host}`) {
+    throw new TypeError('invalid administration Origin');
+  }
+  return { origin: parsed.origin, host };
 }
 
 function singleHeader(req, name) {
@@ -175,8 +145,7 @@ function controllerStatus(error) {
 export function createAdminServer({
   host = process.env.ADMIN_HOST ?? '127.0.0.1',
   port = Number(process.env.ADMIN_PORT ?? 8081),
-  allowedHosts: allowedHostsOption = process.env.ADMIN_ALLOWED_HOSTS,
-  allowedOrigins: allowedOriginsOption = process.env.ADMIN_ALLOWED_ORIGINS,
+  publicHostname: publicHostnameOption = process.env.ADMIN_PUBLIC_HOSTNAME,
   control = createControlClient(),
   globalRateLimiter = new FixedWindowRateLimiter({ limit: 6000, windowMs: 60_000, maxEntries: 1024 }),
   rateLimiter = new FixedWindowRateLimiter({ limit: 300, windowMs: 60_000, maxEntries: 1024 }),
@@ -186,22 +155,9 @@ export function createAdminServer({
   ...httpOptions
 } = {}) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError('invalid admin port');
-  const dynamicDefaults = allowedHostsOption === undefined && port === 0;
-  const dynamicOriginDefaults = allowedOriginsOption === undefined && port === 0;
-  const defaultAuthority = `admin.vpn.invalid:${port}`;
-  const hostAllowlist = new Set(
-    [...listSetting(allowedHostsOption, [defaultAuthority])].map(canonicalAdminAuthority),
-  );
-  const originRecords = [...listSetting(allowedOriginsOption, [`https://${defaultAuthority}`])]
-    .map(canonicalAdminOrigin);
-  const originAllowlist = new Set(originRecords.map((entry) => entry.origin));
-  const originHosts = new Set(originRecords.map((entry) => entry.host));
-  if (
-    hostAllowlist.size !== originHosts.size
-    || [...hostAllowlist].some((entry) => !originHosts.has(entry))
-  ) {
-    throw new TypeError('administration Host and Origin authorities must match exactly');
-  }
+  if (host !== '127.0.0.1') throw new TypeError('administration service must bind to IPv4 loopback');
+  const publicHostname = canonicalAdminAuthority(publicHostnameOption ?? '');
+  const publicOrigin = `https://${publicHostname}`;
   // Browser administration is supported only through a trusted TLS frontend.
   // The __Host- prefix additionally requires Secure, Path=/, and no Domain.
   const cookieOptions = { secure: true, httpOnly: true, sameSite: 'Strict', path: '/' };
@@ -229,7 +185,7 @@ export function createAdminServer({
     } catch {
       canonicalHost = null;
     }
-    if (!canonicalHost || !hostAllowlist.has(canonicalHost)) throw new HttpError(403);
+    if (!canonicalHost || canonicalHost !== publicHostname) throw new HttpError(403);
     const origin = singleHeader(req, 'origin');
     let canonicalOrigin = null;
     let canonicalOriginHost = null;
@@ -245,12 +201,12 @@ export function createAdminServer({
     if (mutation) {
       if (
         !canonicalOrigin
-        || !originAllowlist.has(canonicalOrigin)
+        || canonicalOrigin !== publicOrigin
         || canonicalOriginHost !== canonicalHost
       ) throw new HttpError(403);
     } else if (
       canonicalOrigin
-      && (!originAllowlist.has(canonicalOrigin) || canonicalOriginHost !== canonicalHost)
+      && (canonicalOrigin !== publicOrigin || canonicalOriginHost !== canonicalHost)
     ) {
       throw new HttpError(403);
     }
@@ -499,8 +455,8 @@ export function createAdminServer({
       }
       if (url.pathname === '/public-base') {
         exactForm(form, ['csrf', 'expectedRevision', 'url']);
-        const rawUrl = valueOnce(form, 'url', { min: 0, max: 2048, optional: true });
-        await control.setPublicBase(sessionId, csrf, expectedRevision, rawUrl === '' ? null : rawUrl);
+        const rawUrl = valueOnce(form, 'url', { min: 9, max: 2048 });
+        await control.setPublicBase(sessionId, csrf, expectedRevision, rawUrl);
         redirect(req, res, '/');
         return;
       }
@@ -514,17 +470,7 @@ export function createAdminServer({
     }
   };
 
-  const service = createHttpService(handler, { host, port, shutdownTimeout, ...httpOptions });
-  const originalListen = service.listen.bind(service);
-  service.listen = async () => {
-    const address = await originalListen();
-    if (address && typeof address === 'object') {
-      if (dynamicDefaults) hostAllowlist.add(`admin.vpn.invalid:${address.port}`);
-      if (dynamicOriginDefaults) originAllowlist.add(`https://admin.vpn.invalid:${address.port}`);
-    }
-    return address;
-  };
-  return service;
+  return createHttpService(handler, { host, port, shutdownTimeout, ...httpOptions });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

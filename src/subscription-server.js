@@ -9,7 +9,7 @@ import {
   validateSubscriptionView as validateCanonicalSubscriptionView,
 } from './state-schema.js';
 import {
-  classifyHost,
+  validatePublicDnsHostname,
 } from './validation.js';
 import {
   FixedWindowRateLimiter,
@@ -24,30 +24,35 @@ import {
 const MAX_PROJECTION_BYTES = 1024 * 1024;
 const TOKEN_ROUTE = /^\/s\/([A-Za-z0-9_-]{32,256})(?:\/(links|sing-box|clash))?$/u;
 
-function plainObject(value) {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 /** Strictly validate the public, credential-minimized subscription projection. */
 export function parseSubscriptionView(value) {
-  let candidate = value;
   try {
-    if (
-      plainObject(value)
-      && plainObject(value.gateway)
-      && typeof value.gateway.host === 'string'
-    ) {
-      candidate = {
-        ...value,
-        gateway: { ...value.gateway, host: classifyHost(value.gateway.host, 'gateway.host') },
-      };
-    }
-    if (!Array.isArray(candidate.users) || candidate.users.length > MAX_USERS) throw new Error('invalid projection');
-    return validateCanonicalSubscriptionView(candidate);
+    if (!Array.isArray(value?.users) || value.users.length > MAX_USERS) throw new Error('invalid projection');
+    return validateCanonicalSubscriptionView(value);
   } catch {
     throw new Error('invalid projection');
+  }
+}
+
+function singleHeader(req, name) {
+  let count = 0;
+  let value;
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    if (req.rawHeaders[index].toLowerCase() === name) {
+      count += 1;
+      value = req.rawHeaders[index + 1];
+    }
+  }
+  return count === 1 ? value : null;
+}
+
+function hasCanonicalSubscriptionHost(req, view) {
+  const raw = singleHeader(req, 'host');
+  if (raw === null) return false;
+  try {
+    return validatePublicDnsHostname(raw, 'Host') === view.gateway.subscriptionPublicHostname;
+  } catch {
+    return false;
   }
 }
 
@@ -146,6 +151,7 @@ export function createSubscriptionServer({
   ...httpOptions
 } = {}) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError('invalid subscription port');
+  if (host !== '127.0.0.1') throw new TypeError('subscription service must bind to IPv4 loopback');
   // This aggregate bucket is deliberately limited to malformed requests.
   // Reverse proxies collapse socket addresses; untrusted traffic must not be
   // able to spend a verified subscriber's independent credential allowance.
@@ -197,6 +203,11 @@ export function createSubscriptionServer({
     // has passed the routed readiness probe.
     if (await checkMaintenance()) {
       sendMaintenanceResponse(req, res);
+      return;
+    }
+    if (!hasCanonicalSubscriptionHost(req, view)) {
+      if (!allowMalformed(req, res)) return;
+      sendGenericError(req, res, 404);
       return;
     }
     const user = findSubscriptionUser(view, route[1]);

@@ -1,0 +1,48 @@
+[Unit]
+Description=VPN gateway Cloudflare Tunnel connector
+Wants=network-online.target
+After=network-online.target vpn-gateway-controller.service vpn-gateway-subscription.service vpn-gateway-admin.service
+BindsTo=vpn-gateway-controller.service
+PartOf=vpn-gateway.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=vpn-tunnel
+Group=vpn-tunnel
+UMask=0077
+Environment=HOME=/var/empty
+LoadCredential=cloudflare-tunnel-token:/etc/vpn-gateway/secrets/cloudflare-tunnel-token
+ExecStartPre=/usr/bin/test -s %d/cloudflare-tunnel-token
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --metrics 127.0.0.1:20241 --loglevel fatal --grace-period 30s run --token-file %d/cloudflare-tunnel-token
+ExecStartPost=/usr/bin/cloudflared tunnel --metrics 127.0.0.1:20241 ready
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=120s
+TimeoutStopSec=45s
+KillMode=mixed
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateMounts=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=

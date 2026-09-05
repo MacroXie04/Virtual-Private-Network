@@ -7,9 +7,10 @@ import {
   unlink,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
-  BootstrapError,
   generateHealthCredentials,
+  generateWebSocketPath,
   prepareAdminSecret,
   persistPreparedAdminSecret,
   readBoundedFileNoFollow,
@@ -21,8 +22,12 @@ import {
   createAdminScryptRecord,
   hashSubscriptionToken,
 } from './credentials.js';
+import {
+  validateLegacyRealityKeyPair,
+  validateLegacyRealityShortId,
+} from './legacy-reality.js';
 import { RevisionRepository } from './repository.js';
-import { validateState } from './state-schema.js';
+import { STATE_SCHEMA_VERSION, validateState } from './state-schema.js';
 import {
   ValidationError,
   classifyHost,
@@ -30,7 +35,9 @@ import {
   normalizeDisplayName,
   validateAbsoluteStatePath,
   validatePort,
+  validatePublicDnsHostname,
   validateTimestamp,
+  validateWebSocketPath,
 } from './validation.js';
 
 const LEGACY_ENV_KEYS = new Set([
@@ -234,35 +241,38 @@ export function buildMigratedState({
   const shortId = consistent('SHORT_ID', legacyEnvironment.SHORT_ID, legacyConfig.shortId);
   const rawToken = consistent('SUB_TOKEN', legacyEnvironment.SUB_TOKEN);
   const publicKey = consistent('REALITY_PUBLIC_KEY', legacyEnvironment.REALITY_PUBLIC_KEY);
-  const publicHost = consistent('VPS_HOST', legacyEnvironment.VPS_HOST || fallbackEnvironment.VPS_HOST);
+  validateLegacyRealityKeyPair(privateKey, publicKey, {
+    privatePath: 'legacy.REALITY_PRIVATE_KEY',
+    publicPath: 'legacy.REALITY_PUBLIC_KEY',
+  });
+  validateLegacyRealityShortId(shortId, 'legacy.SHORT_ID');
+  const legacyOrigin = classifyHost(serverName, 'legacy.SERVER_NAME');
+  if (legacyOrigin.kind !== 'dns') {
+    throw new MigrationError('INVALID_LEGACY_CONFIG', 'legacy SERVER_NAME must be a DNS hostname');
+  }
+  const websocketPath = fallbackEnvironment.WS_PATH
+    ? validateWebSocketPath(fallbackEnvironment.WS_PATH, 'WS_PATH')
+    : generateWebSocketPath(randomBytesImpl);
   const displayName = legacyEnvironment.NODE_NAME || fallbackEnvironment.INITIAL_USER_NAME || 'Legacy Primary';
   const state = validateState({
-    schemaVersion: 2,
+    schemaVersion: STATE_SCHEMA_VERSION,
     revision: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
     gateway: {
-      host: classifyHost(publicHost, 'VPS_HOST'),
-      advertisedPort: optionalPort(
-        legacyEnvironment.NODE_PORT ?? fallbackEnvironment.ADVERTISED_PORT ?? fallbackEnvironment.VPN_PORT,
-        'ADVERTISED_PORT',
-        443,
+      vpnPublicHostname: validatePublicDnsHostname(
+        consistent('VPN_PUBLIC_HOSTNAME', fallbackEnvironment.VPN_PUBLIC_HOSTNAME),
+        'VPN_PUBLIC_HOSTNAME',
       ),
-      listenPort: optionalPort(
-        fallbackEnvironment.LISTEN_PORT ?? fallbackEnvironment.NODE_PORT,
-        'LISTEN_PORT',
-        legacyConfig.listenPort,
+      subscriptionPublicBaseUrl: consistent(
+        'SUBSCRIPTION_PUBLIC_BASE_URL',
+        fallbackEnvironment.SUBSCRIPTION_PUBLIC_BASE_URL,
       ),
-      publicBaseUrl: legacyEnvironment.PUBLIC_BASE_URL
-        || legacyEnvironment.PUBLIC_ORIGIN
-        || fallbackEnvironment.PUBLIC_BASE_URL
-        || null,
-    },
-    reality: {
-      serverName,
-      privateKey,
-      publicKey,
-      shortId,
+      adminPublicHostname: validatePublicDnsHostname(
+        consistent('ADMIN_PUBLIC_HOSTNAME', fallbackEnvironment.ADMIN_PUBLIC_HOSTNAME),
+        'ADMIN_PUBLIC_HOSTNAME',
+      ),
+      websocketPath,
     },
     tailscale: {
       hostname: legacyConfig.hostname
@@ -284,9 +294,10 @@ export function buildMigratedState({
       listenPort: optionalPort(fallbackEnvironment.HEALTH_PORT, 'HEALTH_PORT', 19080),
       ...generateHealthCredentials(randomBytesImpl),
       target: {
-        // Keep readiness coupled to the routed REALITY origin. Allowing an
-        // arbitrary IP here would fail to prove that exit-routed DNS works.
-        host: serverName,
+        host: validatePublicDnsHostname(
+          consistent('EGRESS_HEALTH_HOST', fallbackEnvironment.EGRESS_HEALTH_HOST),
+          'EGRESS_HEALTH_HOST',
+        ),
         port: 443,
       },
     },
@@ -340,10 +351,10 @@ export async function inspectLegacyV1({ envPath, configPath, fallbackEnvironment
     legacyEnvironment,
     legacyConfig,
     summary: Object.freeze({
-      gatewayHost: preview.gateway.host,
-      advertisedPort: preview.gateway.advertisedPort,
-      listenPort: preview.gateway.listenPort,
-      serverName: preview.reality.serverName,
+      vpnPublicHostname: preview.gateway.vpnPublicHostname,
+      subscriptionPublicBaseUrl: preview.gateway.subscriptionPublicBaseUrl,
+      adminPublicHostname: preview.gateway.adminPublicHostname,
+      egressHealthHost: preview.health.target.host,
       tailscaleHostname: preview.tailscale.hostname,
       tailscaleStateDirectory: preview.tailscale.stateDirectory,
       exitNode: preview.tailscale.exitNode,
@@ -355,6 +366,274 @@ export async function inspectLegacyV1({ envPath, configPath, fallbackEnvironment
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+const MIGRATION_REVISION_ID = /^[0-9]{16}-[0-9a-f]{16}$/u;
+const MIGRATION_DIGEST = /^[0-9a-f]{64}$/u;
+
+function migrationLineageError(message) {
+  return new MigrationError('INVALID_MIGRATION_LINEAGE', message);
+}
+
+function migrationInvariantDigest(state) {
+  return digest(Buffer.from(JSON.stringify({
+    schemaVersion: state.schemaVersion,
+    createdAt: state.createdAt,
+    gateway: state.gateway,
+    tailscale: {
+      hostname: state.tailscale.hostname,
+      stateDirectory: state.tailscale.stateDirectory,
+      exitNode: state.tailscale.exitNode,
+    },
+    health: state.health,
+    admin: state.admin,
+    users: state.users,
+  }), 'utf8'));
+}
+
+function initialStateBytes(state) {
+  return Buffer.from(`${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+function migrationLineageRecord(state) {
+  const bytes = initialStateBytes(state);
+  return {
+    schemaVersion: 1,
+    source: 'legacy-v1',
+    initialRevisionId: `${String(state.revision).padStart(16, '0')}-${digest(bytes).slice(0, 16)}`,
+    initialRevision: 1,
+    initialStateSha256: digest(bytes),
+    invariantSha256: migrationInvariantDigest(state),
+  };
+}
+
+function parseMigrationLineage(bytes) {
+  let record;
+  try {
+    record = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw migrationLineageError('legacy migration lineage record is not valid JSON');
+  }
+  const keys = [
+    'schemaVersion',
+    'source',
+    'initialRevisionId',
+    'initialRevision',
+    'initialStateSha256',
+    'invariantSha256',
+  ];
+  if (!isPlainObject(record)
+      || Object.keys(record).length !== keys.length
+      || !keys.every((key) => Object.hasOwn(record, key))
+      || record.schemaVersion !== 1
+      || record.source !== 'legacy-v1'
+      || record.initialRevision !== 1
+      || !MIGRATION_REVISION_ID.test(record.initialRevisionId)
+      || !MIGRATION_DIGEST.test(record.initialStateSha256)
+      || !MIGRATION_DIGEST.test(record.invariantSha256)) {
+    throw migrationLineageError('legacy migration lineage record is invalid');
+  }
+  return record;
+}
+
+function assertMigrationLineageMatches(lineage, expected) {
+  if (!isDeepStrictEqual(lineage, expected)) {
+    throw migrationLineageError('legacy migration lineage does not match the reviewed initial revision');
+  }
+}
+
+async function resolveMigrationApiKey(env, inspection) {
+  if (env.TS_API_KEY_FILE) {
+    return readSecretFile(env.TS_API_KEY_FILE, { description: 'Tailscale API-key file' });
+  }
+  return inspection.legacyEnvironment.TS_API_KEY || null;
+}
+
+function reconstructLegacyInitialState({
+  inspection,
+  fallbackEnvironment,
+  expectedStateDirectory,
+  candidateState,
+  apiKey,
+}) {
+  const healthPassword = Buffer.from(candidateState.health.password, 'base64url');
+  return buildMigratedState({
+    legacyEnvironment: inspection.legacyEnvironment,
+    legacyConfig: inspection.legacyConfig,
+    fallbackEnvironment: {
+      ...fallbackEnvironment,
+      MIGRATION_STATE_DIR: expectedStateDirectory,
+    },
+    apiKey,
+    adminRecord: candidateState.admin.scrypt,
+    randomBytesImpl: (size) => {
+      if (size !== healthPassword.length) {
+        throw migrationLineageError('legacy migration health credentials are inconsistent');
+      }
+      return healthPassword;
+    },
+    now: candidateState.createdAt,
+  }).state;
+}
+
+function expectedCredentialScrubState(expectedInitial, updatedAt) {
+  return validateState({
+    ...expectedInitial,
+    revision: 2,
+    updatedAt,
+    tailscale: {
+      ...expectedInitial.tailscale,
+      authKey: null,
+      apiKey: null,
+    },
+  });
+}
+
+/**
+ * Authenticate the only repository states that may resume the outer v1
+ * migration transaction. The controller legitimately replaces revision 1
+ * with a credential-free revision 2 before the installer commits its marker,
+ * so the operation label alone is neither sufficient nor stable. Bind all
+ * invariant state to a private record before services start, then recognize
+ * only the exact initial state or its single credentials.scrub successor.
+ */
+export async function assertLegacyV1MigrationLineage({
+  dataDir,
+  envPath,
+  configPath,
+  fallbackEnvironment = {},
+  expectedStateDirectory,
+  lineagePath,
+  statePublished = false,
+  repository = null,
+} = {}) {
+  const normalizedDataDir = validateAbsoluteStatePath(dataDir, 'DATA_DIR');
+  const normalizedStateDirectory = validateAbsoluteStatePath(
+    expectedStateDirectory,
+    'EXPECTED_STATE_DIRECTORY',
+  );
+  const normalizedLineagePath = validateAbsoluteStatePath(lineagePath, 'MIGRATION_LINEAGE_FILE');
+  if (typeof statePublished !== 'boolean') {
+    throw new TypeError('statePublished must be a boolean');
+  }
+  const repo = repository ?? new RevisionRepository(normalizedDataDir);
+  const [current, runtime] = await Promise.all([
+    repo.readCurrent(),
+    repo.readRuntime(),
+  ]);
+  if (!current || !runtime || current.id !== runtime.id) {
+    throw migrationLineageError('legacy migration pointers do not identify one authoritative revision');
+  }
+
+  const inspection = await inspectLegacyV1({
+    envPath,
+    configPath,
+    fallbackEnvironment: {
+      ...fallbackEnvironment,
+      MIGRATION_STATE_DIR: normalizedStateDirectory,
+    },
+  });
+  const apiKey = await resolveMigrationApiKey(fallbackEnvironment, inspection);
+  const expectedInitial = reconstructLegacyInitialState({
+    inspection,
+    fallbackEnvironment: {
+      ...fallbackEnvironment,
+      MIGRATION_STATE_DIR: normalizedStateDirectory,
+    },
+    expectedStateDirectory: normalizedStateDirectory,
+    candidateState: current.state,
+    apiKey,
+  });
+  const expectedLineage = migrationLineageRecord(expectedInitial);
+  let status;
+  if (current.manifest.operation === 'migrate-v1') {
+    if (current.id !== expectedLineage.initialRevisionId
+        || current.state.revision !== 1
+        || !isDeepStrictEqual(current.state, expectedInitial)) {
+      throw migrationLineageError('current migrate-v1 revision does not match the reviewed legacy sources');
+    }
+    status = 'migrate-v1';
+  } else if (current.manifest.operation === 'credentials.scrub') {
+    if (!statePublished) {
+      throw migrationLineageError('credential scrub appeared before the migration state was published');
+    }
+    if (expectedInitial.tailscale.authKey === null && expectedInitial.tailscale.apiKey === null) {
+      throw migrationLineageError('credential scrub has no credential-bearing migration predecessor');
+    }
+    const expectedScrub = expectedCredentialScrubState(expectedInitial, current.state.updatedAt);
+    if (current.state.revision !== 2 || !isDeepStrictEqual(current.state, expectedScrub)) {
+      throw migrationLineageError('current credential scrub is not the exact successor of the legacy migration');
+    }
+    status = 'credentials.scrub';
+  } else {
+    throw migrationLineageError('current revision is not part of the allowed legacy migration lineage');
+  }
+
+  let lineage;
+  let publishLineage = false;
+  if (await pathExists(normalizedLineagePath)) {
+    lineage = parseMigrationLineage(await readBoundedFileNoFollow(normalizedLineagePath, {
+      maxBytes: 1024,
+      requirePrivate: true,
+      description: 'legacy migration lineage record',
+    }));
+    assertMigrationLineageMatches(lineage, expectedLineage);
+  } else {
+    if (status !== 'migrate-v1' || statePublished) {
+      throw migrationLineageError('legacy migration lineage record is missing');
+    }
+    lineage = expectedLineage;
+    publishLineage = true;
+  }
+
+  const revisions = await repo.listRevisions();
+  const others = revisions.filter((revision) => revision.id !== current.id);
+  if (status === 'migrate-v1' && others.length > 0) {
+    if (!statePublished || others.length !== 1) {
+      throw migrationLineageError('legacy migration repository contains an unrelated revision');
+    }
+    if (expectedInitial.tailscale.authKey === null && expectedInitial.tailscale.apiKey === null) {
+      throw migrationLineageError('interrupted credential scrub has no credential-bearing predecessor');
+    }
+    const interruptedScrub = await repo.readRevision(others[0].id);
+    const expectedScrub = expectedCredentialScrubState(
+      expectedInitial,
+      interruptedScrub.state.updatedAt,
+    );
+    if (interruptedScrub.manifest.operation !== 'credentials.scrub'
+        || interruptedScrub.state.revision !== 2
+        || !isDeepStrictEqual(interruptedScrub.state, expectedScrub)) {
+      throw migrationLineageError('interrupted credential scrub is not an exact migration successor');
+    }
+    const removed = await repo.removeRevision(interruptedScrub.id);
+    if (!removed) {
+      throw migrationLineageError('interrupted credential scrub could not be retired safely');
+    }
+  } else if (status === 'credentials.scrub') {
+    for (const revision of others) {
+      if (revision.id !== lineage.initialRevisionId) {
+        throw migrationLineageError('legacy migration repository contains an unrelated revision');
+      }
+      const predecessor = await repo.readRevision(revision.id);
+      if (predecessor.manifest.operation !== 'migrate-v1'
+          || !isDeepStrictEqual(predecessor.state, expectedInitial)) {
+        throw migrationLineageError('credential scrub predecessor is not the published migrate-v1 revision');
+      }
+    }
+  }
+  if (publishLineage) {
+    await writePrivateFileExclusive(
+      normalizedLineagePath,
+      Buffer.from(`${JSON.stringify(lineage, null, 2)}\n`, 'utf8'),
+    );
+  }
+
+  return Object.freeze({
+    status,
+    id: current.id,
+    revision: current.state.revision,
+    initialRevisionId: lineage.initialRevisionId,
+  });
 }
 
 async function createLegacyBackup({ dataDir, inspection, timestamp, randomBytesImpl }) {
@@ -408,6 +687,164 @@ async function createLegacyBackup({ dataDir, inspection, timestamp, randomBytesI
   return backupPath;
 }
 
+async function readPrivateMigrationMarker(markerPath, description, maxBytes) {
+  const stat = await lstat(markerPath).catch((error) => {
+    if (isMissing(error)) return null;
+    throw error;
+  });
+  if (stat === null
+      || stat.isSymbolicLink()
+      || !stat.isFile()
+      || stat.nlink !== 1
+      || stat.uid !== (process.geteuid?.() ?? process.getuid?.() ?? 0)
+      || (stat.mode & 0o777) !== 0o600) {
+    throw migrationLineageError(`${description} is missing or unsafe`);
+  }
+  const bytes = await readBoundedFileNoFollow(markerPath, {
+    maxBytes,
+    requirePrivate: true,
+    description,
+  });
+  const text = bytes.toString('utf8');
+  if (!text.endsWith('\n') || text.slice(0, -1).includes('\n') || text.includes('\r') || text.includes('\0')) {
+    throw migrationLineageError(`${description} is not canonical`);
+  }
+  return text.slice(0, -1);
+}
+
+async function assertEmptyPrivateMigrationMarker(markerPath, description) {
+  const stat = await lstat(markerPath).catch((error) => {
+    if (isMissing(error)) return null;
+    throw error;
+  });
+  if (stat === null
+      || stat.isSymbolicLink()
+      || !stat.isFile()
+      || stat.nlink !== 1
+      || stat.uid !== (process.geteuid?.() ?? process.getuid?.() ?? 0)
+      || (stat.mode & 0o777) !== 0o600
+      || stat.size !== 0) {
+    throw migrationLineageError(`${description} is missing or unsafe`);
+  }
+}
+
+async function authenticateLegacyMigrationMarker({ dataDir, markerDir, inspection }) {
+  if (!markerDir) return null;
+  const normalizedMarkerDir = validateAbsoluteStatePath(markerDir, 'MIGRATION_MARKER_DIR');
+  if (normalizedMarkerDir !== path.join(dataDir, '.legacy-migration-in-progress')) {
+    throw migrationLineageError('legacy migration marker path is not canonical');
+  }
+  const markerStat = await lstat(normalizedMarkerDir).catch((error) => {
+    if (isMissing(error)) return null;
+    throw error;
+  });
+  if (markerStat === null
+      || markerStat.isSymbolicLink()
+      || !markerStat.isDirectory()
+      || markerStat.uid !== (process.geteuid?.() ?? process.getuid?.() ?? 0)
+      || (markerStat.mode & 0o777) !== 0o700) {
+    throw migrationLineageError('legacy migration marker directory is missing or unsafe');
+  }
+  const [envDigest, configDigest, sourceState] = await Promise.all([
+    readPrivateMigrationMarker(path.join(normalizedMarkerDir, 'env.sha256'), 'legacy environment digest', 65),
+    readPrivateMigrationMarker(path.join(normalizedMarkerDir, 'config.sha256'), 'legacy config digest', 65),
+    readPrivateMigrationMarker(path.join(normalizedMarkerDir, 'source-state'), 'legacy state source marker', 4096),
+  ]);
+  if (!MIGRATION_DIGEST.test(envDigest) || envDigest !== digest(inspection.environmentBytes)) {
+    throw migrationLineageError('legacy environment does not match the approved migration marker');
+  }
+  if (!MIGRATION_DIGEST.test(configDigest) || configDigest !== digest(inspection.configBytes)) {
+    throw migrationLineageError('legacy configuration does not match the approved migration marker');
+  }
+  if (sourceState !== validateAbsoluteStatePath(
+    inspection.legacyConfig.stateDirectory,
+    'legacy.stateDirectory',
+  )) {
+    throw migrationLineageError('legacy Tailscale state does not match the approved migration marker');
+  }
+  await assertEmptyPrivateMigrationMarker(
+    path.join(normalizedMarkerDir, 'state-copied'),
+    'legacy state-copied marker',
+  );
+  const statePublishedPath = path.join(normalizedMarkerDir, 'state-published');
+  const statePublished = await pathExists(statePublishedPath);
+  if (statePublished) {
+    await assertEmptyPrivateMigrationMarker(statePublishedPath, 'legacy state-published marker');
+  }
+  if (await pathExists(path.join(normalizedMarkerDir, 'committed'))) {
+    throw migrationLineageError('legacy migration marker is already committed');
+  }
+  return Object.freeze({
+    directory: normalizedMarkerDir,
+    lineagePath: path.join(normalizedMarkerDir, 'lineage.json'),
+    statePublished,
+  });
+}
+
+async function readMigrationLineage(lineagePath) {
+  return parseMigrationLineage(await readBoundedFileNoFollow(lineagePath, {
+    maxBytes: 1024,
+    requirePrivate: true,
+    description: 'legacy migration lineage record',
+  }));
+}
+
+async function recoverLegacyMigrationOrphan({
+  repository,
+  revisions,
+  marker,
+  inspection,
+  env,
+  apiKey,
+  stateDirectory,
+  dataDir,
+  singBoxPath,
+  execFileImpl,
+  validateConfigImpl,
+}) {
+  if (revisions.length === 0) return null;
+  if (marker === null) {
+    throw new MigrationError(
+      'ORPHANED_REVISION',
+      'an unpointed revision cannot be recovered without the approved legacy migration marker',
+    );
+  }
+  if (marker.statePublished || revisions.length !== 1 || !(await pathExists(marker.lineagePath))) {
+    throw migrationLineageError('legacy migration orphan set is not an authorized pre-publication state');
+  }
+  const lineage = await readMigrationLineage(marker.lineagePath);
+  const orphan = await repository.readRevision(revisions[0].id);
+  const expectedInitial = reconstructLegacyInitialState({
+    inspection,
+    fallbackEnvironment: env,
+    expectedStateDirectory: stateDirectory,
+    candidateState: orphan.state,
+    apiKey,
+  });
+  const expectedLineage = migrationLineageRecord(expectedInitial);
+  assertMigrationLineageMatches(lineage, expectedLineage);
+  if (orphan.id !== expectedLineage.initialRevisionId
+      || orphan.manifest.operation !== 'migrate-v1'
+      || orphan.state.revision !== 1
+      || !isDeepStrictEqual(orphan.state, expectedInitial)) {
+    throw migrationLineageError('unpointed revision is not the exact approved migrate-v1 candidate');
+  }
+  await validateCandidateConfig(orphan.state, {
+    dataDir,
+    singBoxPath,
+    execFileImpl,
+    validateConfigImpl,
+  });
+  await repository.activateRuntime(orphan.id);
+  await repository.activateCurrent(orphan.id);
+  return Object.freeze({
+    status: 'recovered',
+    id: orphan.id,
+    revision: orphan.state.revision,
+    adminSecretPath: path.join(dataDir, 'admin-secret'),
+  });
+}
+
 export async function migrateLegacyV1({
   apply = false,
   dataDir,
@@ -435,21 +872,55 @@ export async function migrateLegacyV1({
     }
   }
 
-  let apiKey = null;
-  if (env.TS_API_KEY_FILE) {
-    apiKey = await readSecretFile(env.TS_API_KEY_FILE, { description: 'Tailscale API-key file' });
-  }
   const inspection = await inspectLegacyV1({
     envPath,
     configPath,
     fallbackEnvironment: env,
   });
+  const apiKey = await resolveMigrationApiKey(env, inspection);
   if (!apply) {
     return Object.freeze({
       status: 'dry-run',
       sourcePaths: Object.freeze([envPath, configPath]),
       summary: inspection.summary,
     });
+  }
+
+  const marker = await authenticateLegacyMigrationMarker({
+    dataDir: normalizedDataDir,
+    markerDir: env.MIGRATION_MARKER_DIR,
+    inspection,
+  });
+  const revisions = await repo.listRevisions();
+  const recovered = await recoverLegacyMigrationOrphan({
+    repository: repo,
+    revisions,
+    marker,
+    inspection,
+    env,
+    apiKey,
+    stateDirectory: validateAbsoluteStatePath(
+      env.MIGRATION_STATE_DIR
+        || inspection.legacyConfig.stateDirectory
+        || inspection.legacyEnvironment.SINGBOX_STATE_DIR
+        || env.SINGBOX_STATE_DIR,
+      'SINGBOX_STATE_DIR',
+    ),
+    dataDir: normalizedDataDir,
+    singBoxPath,
+    execFileImpl,
+    validateConfigImpl,
+  });
+  if (recovered !== null) return recovered;
+  if (marker?.statePublished) {
+    throw migrationLineageError('migration state was marked published without an authoritative revision');
+  }
+  if (marker && await pathExists(marker.lineagePath)) {
+    // A crash after publishing intent but before the immutable revision leaves
+    // no authority to recover. Validate and remove only that private intent;
+    // the new attempt will publish a fresh commitment before its revision.
+    await readMigrationLineage(marker.lineagePath);
+    await unlink(marker.lineagePath);
   }
 
   const timestamp = migrationTimestamp(now);
@@ -477,6 +948,12 @@ export async function migrateLegacyV1({
     randomBytesImpl,
   });
   await persistPreparedAdminSecret(preparedAdmin);
+  if (marker !== null) {
+    await writePrivateFileExclusive(
+      marker.lineagePath,
+      Buffer.from(`${JSON.stringify(migrationLineageRecord(state), null, 2)}\n`, 'utf8'),
+    );
+  }
   const revision = await repo.initialize(state, { operation: 'migrate-v1' });
   return Object.freeze({
     status: 'migrated',

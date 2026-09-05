@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Hardened multi-user VLESS+REALITY gateway with embedded Tailscale exit-node egress.",
+  "description": "Hardened multi-user VLESS WebSocket gateway with Cloudflare Tunnel ingress and Tailscale exit-node egress.",
   "engines": {
     "node": ">=24.20.0 <25"
   },

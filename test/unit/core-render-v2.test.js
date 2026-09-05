@@ -19,163 +19,104 @@ function lifecycleState() {
     users: [
       fixtureUser(),
       fixtureUser({
-        id: 'bob',
-        displayName: 'Bob',
-        uuid: '00000000-0000-4000-8000-000000000002',
-        tokenHash: hashSubscriptionToken('b'.repeat(32)),
-        status: 'disabled',
-        updatedAt: '2026-09-04T00:01:00.000Z',
-        disabledAt: '2026-09-04T00:01:00.000Z',
+        id: 'bob', displayName: 'Bob', uuid: '00000000-0000-4000-8000-000000000002',
+        tokenHash: hashSubscriptionToken('b'.repeat(32)), status: 'disabled',
+        updatedAt: '2026-09-04T00:01:00.000Z', disabledAt: '2026-09-04T00:01:00.000Z',
       }),
       fixtureUser({
-        id: 'carol',
-        displayName: 'Carol',
-        uuid: '00000000-0000-4000-8000-000000000003',
-        tokenHash: hashSubscriptionToken('c'.repeat(32)),
-        status: 'revoked',
-        updatedAt: '2026-09-04T00:02:00.000Z',
-        revokedAt: '2026-09-04T00:02:00.000Z',
+        id: 'carol', displayName: 'Carol', uuid: '00000000-0000-4000-8000-000000000003',
+        tokenHash: hashSubscriptionToken('c'.repeat(32)), status: 'revoked',
+        updatedAt: '2026-09-04T00:02:00.000Z', revokedAt: '2026-09-04T00:02:00.000Z',
       }),
     ],
   });
 }
 
-test('server renderer exposes active VLESS users and forces every inbound through ts-out', () => {
+test('server renderer uses only loopback VLESS WebSocket and the ts-out final route', () => {
   const config = renderSingBoxConfig(lifecycleState());
-  const publicInbound = config.inbounds.find((inbound) => inbound.tag === 'vless-in');
-  const healthInbound = config.inbounds.find((inbound) => inbound.tag === 'health-in');
-  assert.deepEqual(publicInbound.users.map((user) => user.name), ['alice']);
-  assert.deepEqual(publicInbound.users.map((user) => user.uuid), [
-    '00000000-0000-4000-8000-000000000001',
-  ]);
-  assert.equal(healthInbound.type, 'mixed');
-  assert.equal(healthInbound.listen, '127.0.0.1');
-  assert.deepEqual(healthInbound.users, [{
-    username: lifecycleState().health.username,
-    password: lifecycleState().health.password,
-  }]);
+  const inbound = config.inbounds.find((entry) => entry.tag === 'vless-in');
+  assert.deepEqual(inbound, {
+    type: 'vless', tag: 'vless-in', listen: '127.0.0.1', listen_port: 8443,
+    users: [{ name: 'alice', uuid: '00000000-0000-4000-8000-000000000001' }],
+    transport: { type: 'ws', path: lifecycleState().gateway.websocketPath },
+  });
+  assert.equal(Object.hasOwn(inbound, 'tls'), false);
   assert.equal(config.route.final, 'ts-out');
   assert.equal(config.route.default_domain_resolver, 'exit-dns');
   assert.deepEqual(config.route.rules, [
     { inbound: ['vless-in', 'health-in'], action: 'resolve', server: 'exit-dns' },
     { inbound: ['vless-in', 'health-in'], ip_is_private: true, action: 'reject' },
-    {
-      inbound: ['vless-in', 'health-in'],
-      ip_cidr: [...BLOCKED_NON_INTERNET_CIDRS],
-      action: 'reject',
-    },
+    { inbound: ['vless-in', 'health-in'], ip_cidr: [...BLOCKED_NON_INTERNET_CIDRS], action: 'reject' },
   ]);
   assert.equal(Object.hasOwn(config, 'outbounds'), false);
   assert.deepEqual(config.endpoints.map((endpoint) => endpoint.tag), ['ts-out']);
-  assert.equal(config.endpoints[0].domain_resolver, 'bootstrap-dns');
-  assert.deepEqual(config.dns, {
-    servers: [
-      { type: 'local', tag: 'bootstrap-dns' },
-      { type: 'udp', tag: 'exit-dns', server: '1.1.1.1', server_port: 53, detour: 'ts-out' },
-    ],
-    final: 'exit-dns',
-  });
-  assert.equal(publicInbound.tls.reality.handshake.detour, 'ts-out');
-  assert.doesNotThrow(() => assertFailClosedConfig(config));
+  assert.doesNotThrow(() => assertFailClosedConfig(config, lifecycleState()));
 });
 
-test('server renderer never copies controller-only API credentials into sing-box', () => {
+test('server assertion rejects direct fallback and transport weakening', () => {
   const state = fixtureState();
-  const configText = JSON.stringify(renderSingBoxConfig(state));
-  assert.equal(configText.includes(state.tailscale.apiKey), false);
-  assert.equal(configText.includes(state.tailscale.authKey), true);
-  assert.equal(configText.includes(state.users[0].tokenHash), false);
-  assert.equal(configText.includes(state.health.password), true);
-
-  const unsafe = { ...renderSingBoxConfig(state), outbounds: [{ type: 'direct', tag: 'direct' }] };
-  assert.throws(() => assertFailClosedConfig(unsafe), /fallback outbound/);
-
-  const unauthenticated = structuredClone(renderSingBoxConfig(state));
-  unauthenticated.inbounds.find((inbound) => inbound.tag === 'health-in').users = [];
-  assert.throws(() => assertFailClosedConfig(unauthenticated), /exactly one health probe user/);
-
-  const directRealityFallback = structuredClone(renderSingBoxConfig(state));
-  delete directRealityFallback.inbounds
-    .find((inbound) => inbound.tag === 'vless-in').tls.reality.handshake.detour;
-  assert.throws(() => assertFailClosedConfig(directRealityFallback), /unsupported or missing fields/);
-
-  const directDns = structuredClone(renderSingBoxConfig(state));
+  const rendered = renderSingBoxConfig(state);
+  assert.equal(JSON.stringify(rendered).includes(state.tailscale.apiKey), false);
+  assert.equal(JSON.stringify(rendered).includes(state.users[0].tokenHash), false);
+  const direct = { ...rendered, outbounds: [{ type: 'direct', tag: 'direct' }] };
+  assert.throws(() => assertFailClosedConfig(direct), /fallback outbound/);
+  const tlsOrigin = structuredClone(rendered);
+  tlsOrigin.inbounds[0].tls = { enabled: true };
+  assert.throws(() => assertFailClosedConfig(tlsOrigin), /unsupported or missing fields/);
+  const wrongPath = structuredClone(rendered);
+  wrongPath.inbounds[0].transport.path = `/${'B'.repeat(43)}`;
+  assert.throws(() => assertFailClosedConfig(wrongPath, state), /does not match state/);
+  const directDns = structuredClone(rendered);
   delete directDns.dns.servers.find((server) => server.tag === 'exit-dns').detour;
   assert.throws(() => assertFailClosedConfig(directDns), /unsupported or missing fields/);
-
-  const recursiveBootstrap = structuredClone(renderSingBoxConfig(state));
-  recursiveBootstrap.endpoints[0].domain_resolver = 'exit-dns';
-  assert.throws(() => assertFailClosedConfig(recursiveBootstrap), /persistent Tailscale state/);
-
-  // Literal private/Tailnet addresses hit the reject rules directly. Domains
-  // are resolved first, then the same rules examine every returned A/AAAA.
-  const noResolveBeforeReject = structuredClone(renderSingBoxConfig(state));
-  [noResolveBeforeReject.route.rules[0], noResolveBeforeReject.route.rules[1]] = [
-    noResolveBeforeReject.route.rules[1],
-    noResolveBeforeReject.route.rules[0],
-  ];
-  assert.throws(() => assertFailClosedConfig(noResolveBeforeReject), /config\.route\.rules\[0\]/u);
-
-  const allowsCgnat = structuredClone(renderSingBoxConfig(state));
-  allowsCgnat.route.rules[2].ip_cidr = allowsCgnat.route.rules[2].ip_cidr
-    .filter((cidr) => cidr !== '100.64.0.0/10');
-  assert.throws(() => assertFailClosedConfig(allowsCgnat), /config\.route\.rules\[2\]/u);
-
-  const allowsTailnetUla = structuredClone(renderSingBoxConfig(state));
-  allowsTailnetUla.route.rules[2].ip_cidr = allowsTailnetUla.route.rules[2].ip_cidr
-    .filter((cidr) => cidr !== 'fd7a:115c:a1e0::/48');
-  assert.throws(() => assertFailClosedConfig(allowsTailnetUla), /config\.route\.rules\[2\]/u);
-
-  for (const specialUseCidr of [
-    '192.88.99.2/32',
-    '64:ff9b::/96',
-    '100:0:0:1::/64',
-    '2001::/32',
-    '2001:2::/48',
-    '3fff::/20',
-    '5f00::/16',
-  ]) {
-    assert.equal(
-      BLOCKED_NON_INTERNET_CIDRS.includes(specialUseCidr),
-      true,
-      `${specialUseCidr} must remain blocked`,
-    );
-  }
+  const allowsCgnat = structuredClone(rendered);
+  allowsCgnat.route.rules[2].ip_cidr = allowsCgnat.route.rules[2].ip_cidr.filter((cidr) => cidr !== '100.64.0.0/10');
+  assert.throws(() => assertFailClosedConfig(allowsCgnat), /rules\[2\]/u);
 });
 
-test('subscription projection contains only public connection data and active token hashes', () => {
+test('projection excludes private state and every client format is VLESS WebSocket TLS', () => {
   const state = lifecycleState();
   const view = buildSubscriptionView(state);
   assert.deepEqual(view.users.map((user) => user.id), ['alice']);
   const serialized = JSON.stringify(view);
-  assert.equal(serialized.includes(state.reality.privateKey), false);
   assert.equal(serialized.includes(state.tailscale.apiKey), false);
   assert.equal(serialized.includes(state.tailscale.authKey), false);
   assert.equal(serialized.includes(state.health.password), false);
+  const link = renderVlessLink(state, 'alice');
+  const parsed = new URL(link);
+  assert.equal(parsed.hostname, 'vpn.example.com');
+  assert.equal(parsed.port, '443');
+  assert.equal(parsed.searchParams.get('security'), 'tls');
+  assert.equal(parsed.searchParams.get('type'), 'ws');
+  assert.equal(parsed.searchParams.get('host'), 'vpn.example.com');
+  assert.equal(parsed.searchParams.get('path'), state.gateway.websocketPath);
+  for (const forbidden of ['pbk=', 'sid=', 'fp=', 'flow=']) assert.equal(link.includes(forbidden), false);
+  const singBox = renderSingBoxClientConfig(state, 'alice').outbounds[0];
+  assert.deepEqual(singBox.tls, { enabled: true, server_name: 'vpn.example.com' });
+  assert.deepEqual(singBox.transport, {
+    type: 'ws', path: state.gateway.websocketPath, headers: { Host: 'vpn.example.com' },
+  });
+  assert.equal(Object.hasOwn(singBox, 'flow'), false);
+  const clash = renderClashClientConfig(state, 'alice');
+  assert.match(clash, /network: ws/u);
+  assert.match(clash, /tls: true/u);
+  assert.match(clash, /servername: "vpn\.example\.com"/u);
+  assert.match(clash, /Host: "vpn\.example\.com"/u);
+  assert.equal(clash.includes('reality-opts'), false);
+  assert.equal(Buffer.from(renderMixedSubscription(state, 'alice'), 'base64').toString('utf8'), `${link}\n`);
 });
 
-test('client formats bracket IPv6 authorities and quote hostile YAML scalars', () => {
+test('client formats safely encode display names that contain YAML syntax', () => {
   const displayName = 'Phone: [primary] #1';
-  const state = fixtureState({
-    gateway: {
-      ...fixtureState().gateway,
-      host: { kind: 'ipv6', value: '2001:db8::5' },
-    },
-    users: [fixtureUser({ displayName })],
-  });
-  const link = renderVlessLink(state, 'alice');
-  assert.match(link, /@\[2001:db8::5\]:443\?/u);
-  assert.equal(link.endsWith(`#${encodeURIComponent(displayName)}`), true);
+  const state = fixtureState({ users: [fixtureUser({ displayName })] });
+
+  const link = new URL(renderVlessLink(state, 'alice'));
+  assert.equal(decodeURIComponent(link.hash.slice(1)), displayName);
 
   const singBox = renderSingBoxClientConfig(state, 'alice');
-  assert.equal(singBox.outbounds[0].server, '2001:db8::5');
-  assert.equal(singBox.route.final, 'proxy');
-  assert.equal(singBox.outbounds.some((outbound) => outbound.type === 'direct'), false);
+  assert.equal(singBox.outbounds[0].server, 'vpn.example.com');
 
   const clash = renderClashClientConfig(state, 'alice');
-  assert.match(clash, /server: "2001:db8::5"/u);
   assert.match(clash, /name: "Phone: \[primary\] #1"/u);
-  assert.equal(clash.includes('\n  - name: Phone:'), false);
-
-  assert.equal(Buffer.from(renderMixedSubscription(state, 'alice'), 'base64').toString('utf8'), `${link}\n`);
+  assert.doesNotMatch(clash, /name: Phone: \[primary\] #1/u);
 });

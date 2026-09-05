@@ -35,6 +35,7 @@ test('controller runtime receives the exact authenticated health inbound credent
       SINGBOX_GID: String(process.getgid?.() ?? 0),
       SUB_GID: String(process.getgid?.() ?? 0),
       ADMIN_GID: String(process.getgid?.() ?? 0),
+      ADMIN_PUBLIC_HOSTNAME: state.gateway.adminPublicHostname,
       SUPERVISE: '0',
     },
     repository,
@@ -45,5 +46,11 @@ test('controller runtime receives the exact authenticated health inbound credent
   assert.equal(application.runtime.health.username, state.health.username);
   assert.equal(application.runtime.health.password, state.health.password);
   assert.equal(application.runtime.health.listenPort, state.health.listenPort);
+  assert.deepEqual(application.runtime.health.websocket, {
+    connectHost: '127.0.0.1',
+    connectPort: 8443,
+    authority: state.gateway.vpnPublicHostname,
+    path: state.gateway.websocketPath,
+  });
   await application.close();
 });

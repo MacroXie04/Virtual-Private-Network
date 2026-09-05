@@ -59,7 +59,11 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
       return {
         revision: 7,
         csrf: 'controller-csrf',
-        gateway: { host: { kind: 'dns', value: 'vpn.example' }, advertisedPort: 443 },
+        gateway: {
+          vpnPublicHostname: 'vpn.example.com', publicPort: 443,
+          subscriptionPublicBaseUrl: 'https://sub.example.com',
+          adminPublicHostname: 'admin.test',
+        },
         users: [{ id: 'alice', displayName: 'Alice', status: 'active' }],
         exitNodes: [{ deviceId: 'exit-one', name: 'Exit one' }],
       };
@@ -83,8 +87,7 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
   });
   const address = await service.listen();
@@ -164,36 +167,29 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
   assert.equal(exportResponse.body, 'vless://exported\n');
   assert.doesNotMatch(exportResponse.body, /raw-once/u);
   assert.equal((await request(address, '/users/alice/status', { headers: { cookie: sessionCookie } })).status, 404);
+
+  const emptyPublicBase = await request(address, '/public-base', {
+    method: 'POST',
+    headers: {
+      origin: 'https://admin.test', cookie: sessionCookie,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: encoded({ csrf: 'controller-csrf', expectedRevision: '7', url: '' }),
+  });
+  assert.equal(emptyPublicBase.status, 400);
+  assert.equal(calls.some((call) => call[0] === 'setPublicBase'), false);
 });
 
-test('admin server requires a dedicated cookie hostname instead of an IP or localhost', () => {
-  for (const [allowedHosts, allowedOrigins] of [
-    [['127.0.0.1:8081'], ['https://127.0.0.1:8081']],
-    [['localhost:8081'], ['https://localhost:8081']],
-    [['admin.localhost:8081'], ['https://admin.localhost:8081']],
-  ]) {
+test('admin server requires one dedicated public hostname', () => {
+  for (const publicHostname of ['127.0.0.1', 'localhost', 'admin.localhost', 'singlelabel', 'admin.test.']) {
     assert.throws(() => createAdminServer({
       host: '127.0.0.1',
       port: 8081,
-      allowedHosts,
-      allowedOrigins,
+      publicHostname,
       control: {},
     }), /dedicated DNS hostname/u);
   }
-  assert.throws(() => createAdminServer({
-    host: '127.0.0.1',
-    port: 8081,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['http://admin.test'],
-    control: {},
-  }), /Origin allowlist/u);
-  assert.throws(() => createAdminServer({
-    host: '127.0.0.1',
-    port: 8081,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test', 'https://other.test'],
-    control: {},
-  }), /must match exactly/u);
+  assert.throws(() => createAdminServer({ host: '0.0.0.0', port: 8081, publicHostname: 'admin.test' }), /loopback/u);
 });
 
 test('admin server requires each request Origin authority to equal its Host', async (t) => {
@@ -201,8 +197,7 @@ test('admin server requires each request Origin authority to equal its Host', as
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin-one.test', 'admin-two.test'],
-    allowedOrigins: ['https://admin-one.test', 'https://admin-two.test'],
+    publicHostname: 'admin-one.test',
     control: { login: async () => { loginCalls += 1; } },
   });
   const address = await service.listen();
@@ -233,8 +228,7 @@ test('admin server rejects oversized mutation bodies before controller dispatch'
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
   });
   const address = await service.listen();
@@ -260,8 +254,7 @@ test('admin server rejects duplicate and unexpected form fields before controlle
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
   });
   const address = await service.listen();
@@ -297,8 +290,7 @@ test('admin server enforces the authentication-failure rate limit with a real 42
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
     loginRateLimiter: new FixedWindowRateLimiter({
       limit: 1,
@@ -350,7 +342,11 @@ test('credentialless traffic cannot exhaust per-session administration limits', 
       return {
         revision: 1,
         csrf: 'csrf',
-        gateway: { host: { kind: 'dns', value: 'vpn.example' }, advertisedPort: 443 },
+        gateway: {
+          vpnPublicHostname: 'vpn.example.com', publicPort: 443,
+          subscriptionPublicBaseUrl: 'https://sub.example.com',
+          adminPublicHostname: 'admin.test',
+        },
         users: [],
         exitNodes: [],
       };
@@ -359,8 +355,7 @@ test('credentialless traffic cannot exhaust per-session administration limits', 
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
     rateLimiter: new FixedWindowRateLimiter({
       limit: 1,
@@ -409,7 +404,11 @@ test('anonymous aggregate throttling cannot block a verified administration sess
     snapshot: async () => ({
       revision: 1,
       csrf: 'csrf',
-      gateway: { host: { kind: 'dns', value: 'vpn.example' }, advertisedPort: 443 },
+      gateway: {
+        vpnPublicHostname: 'vpn.example.com', publicPort: 443,
+        subscriptionPublicBaseUrl: 'https://sub.example.com',
+        adminPublicHostname: 'admin.test',
+      },
       users: [],
       exitNodes: [],
     }),
@@ -417,8 +416,7 @@ test('anonymous aggregate throttling cannot block a verified administration sess
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
     globalRateLimiter: new FixedWindowRateLimiter({
       limit: 1,
@@ -446,8 +444,7 @@ test('admin server rate-limits authenticated state-changing requests', async (t)
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
     mutationRateLimiter: new FixedWindowRateLimiter({
       limit: 1,
@@ -490,8 +487,7 @@ test('admin server trusts only explicit proxy-facing Host and Origin allowlists'
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.example.test'],
-    allowedOrigins: ['https://admin.example.test'],
+    publicHostname: 'admin.example.test',
     control,
   });
   const address = await service.listen();
@@ -567,8 +563,7 @@ test('admin shutdown drains an accepted one-time credential response', async () 
   const service = createAdminServer({
     host: '127.0.0.1',
     port: 0,
-    allowedHosts: ['admin.test'],
-    allowedOrigins: ['https://admin.test'],
+    publicHostname: 'admin.test',
     control,
     shutdownTimeout: 1_000,
   });

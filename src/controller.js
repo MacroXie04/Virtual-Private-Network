@@ -192,6 +192,11 @@ export class GatewayController {
     this.mutationTail = Promise.resolve();
     this.loginTail = Promise.resolve();
     this.maintenancePath = path.join(dataDir, 'maintenance');
+    this.outerTransactionPaths = [
+      path.join(dataDir, '.legacy-migration-in-progress'),
+      path.join(dataDir, '.upgrade-restart-in-progress'),
+      path.join(dataDir, '.upgrade-rollback-in-progress'),
+    ];
     this.auditPath = path.join(dataDir, 'audit.jsonl');
   }
 
@@ -236,6 +241,22 @@ export class GatewayController {
       }
     } finally {
       await handle?.close().catch(() => {});
+    }
+  }
+
+  async assertOuterTransactionCommitted() {
+    for (const markerPath of this.outerTransactionPaths) {
+      try {
+        await lstat(markerPath);
+      } catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw new ControllerError('STATE_UNAVAILABLE', 503);
+      }
+      // The bare installer retains these durable markers until its external
+      // Tunnel/origin checks and transaction commit complete. Repository
+      // writes in that window could either create descendants that cannot be
+      // attributed safely on resume or be silently lost during rollback.
+      throw new ControllerError('DEPLOYMENT_NOT_COMMITTED', 503);
     }
   }
 
@@ -292,11 +313,9 @@ export class GatewayController {
   }
 
   async recover() {
-    let current = await this.repository.readCurrent();
+    const current = await this.repository.readCurrent();
     if (!current) throw new ControllerError('NOT_INITIALIZED', 503);
-    if (current.requiresPolicyUpgrade) {
-      throw new ControllerError('STATE_UNAVAILABLE', 503);
-    }
+    if (current.requiresIngressMigration) return this.recoverIngressMigration(current);
     this.ready = false;
     await this.setMaintenance(true);
     await this.repository.activateRuntime(current.id);
@@ -305,6 +324,66 @@ export class GatewayController {
       await this.runtime.restart();
       await this.runtime.probe();
       return await this.retireBootstrapCredentials(current);
+    } catch {
+      this.ready = false;
+      await this.setMaintenance(true).catch(() => {});
+      throw new ControllerError('RUNTIME_UNAVAILABLE', 503);
+    }
+  }
+
+  /** Complete the explicitly staged one-way REALITY-to-WebSocket cutover. */
+  async recoverIngressMigration(previous) {
+    const candidate = await this.repository.readRuntime();
+    if (
+      !candidate
+      || candidate.requiresIngressMigration
+      || candidate.id === previous.id
+      || candidate.state.schemaVersion !== 3
+      || candidate.state.revision !== previous.state.revision + 1
+      || candidate.manifest.operation !== 'ingress.migrate'
+      || candidate.state.createdAt !== previous.state.createdAt
+      || JSON.stringify(candidate.state.users) !== JSON.stringify(previous.state.users)
+      || JSON.stringify(candidate.state.admin) !== JSON.stringify(previous.state.admin)
+      || JSON.stringify(candidate.state.tailscale) !== JSON.stringify(previous.state.tailscale)
+      || candidate.state.health.listenPort !== previous.state.health.listenPort
+      || candidate.state.health.username !== previous.state.health.username
+      || candidate.state.health.password !== previous.state.health.password
+    ) {
+      throw new ControllerError('MIGRATION_NOT_STAGED', 503);
+    }
+    this.ready = false;
+    await this.setMaintenance(true);
+    try {
+      await this.validateConfig(path.join(candidate.path, 'sing-box.json'));
+      await this.repository.activateRuntime(candidate.id);
+      await this.runtime.restart();
+      await this.runtime.probe();
+      await this.repository.activateCurrent(candidate.id);
+      await this.appendAudit({
+        operation: 'ingress.migrate',
+        revision: candidate.state.revision,
+      }).catch(() => {});
+    } catch {
+      let restored = true;
+      try {
+        await this.repository.activateCurrent(previous.id);
+        await this.repository.activateRuntime(previous.id);
+      } catch {
+        restored = false;
+      }
+      // Deliberately do not restart the retired public REALITY listener. The
+      // restored pointers exist only as rollback authority for the next
+      // explicit attempt; maintenance remains authoritative and startup fails.
+      if (restored) await this.repository.removeRevision?.(candidate.id).catch(() => {});
+      await this.appendAudit({
+        operation: 'ingress.migrate',
+        revision: previous.state.revision,
+        outcome: restored ? 'rolled-back' : 'rollback-failed',
+      }).catch(() => {});
+      throw new ControllerError(restored ? 'MIGRATION_FAILED' : 'MIGRATION_ROLLBACK_FAILED', 503);
+    }
+    try {
+      return await this.retireBootstrapCredentials(candidate);
     } catch {
       this.ready = false;
       await this.setMaintenance(true).catch(() => {});
@@ -353,7 +432,7 @@ export class GatewayController {
         ? await this.repository.readRevisionForRetirement(revision.id)
         : await this.repository.readRevision(revision.id);
       if (
-        obsolete.requiresPolicyUpgrade
+        obsolete.requiresIngressMigration
         || obsolete.state.tailscale.authKey !== null
         || obsolete.state.tailscale.apiKey !== null
       ) {
@@ -415,7 +494,7 @@ export class GatewayController {
   }
 
   credentialResult(state, user, token, csrf) {
-    const base = state.gateway.publicBaseUrl;
+    const base = state.gateway.subscriptionPublicBaseUrl;
     return {
       user: safeUser(user),
       rawToken: token,
@@ -538,9 +617,10 @@ export class GatewayController {
       csrf,
       ready: this.ready,
       gateway: {
-        host: current.state.gateway.host,
-        advertisedPort: current.state.gateway.advertisedPort,
-        publicBaseUrl: current.state.gateway.publicBaseUrl,
+        vpnPublicHostname: current.state.gateway.vpnPublicHostname,
+        publicPort: 443,
+        subscriptionPublicBaseUrl: current.state.gateway.subscriptionPublicBaseUrl,
+        adminPublicHostname: current.state.gateway.adminPublicHostname,
         exitNode: {
           deviceId: selected?.deviceId ?? null,
           address: current.state.tailscale.exitNode,
@@ -619,6 +699,8 @@ export class GatewayController {
           this.sessions.destroy(sessionId);
           return {};
         }
+
+        await this.assertOuterTransactionCommitted();
 
         const credentialFingerprint = credentialMutationFingerprint(request, op);
         if (credentialFingerprint !== null) {
@@ -739,9 +821,9 @@ export class GatewayController {
           const url = validatePublicBaseUrl(request.url, 'url');
           const timestamp = this.timestamp();
           const changed = nextState(current.state, {
-            gateway: { ...current.state.gateway, publicBaseUrl: url },
+            gateway: { ...current.state.gateway, subscriptionPublicBaseUrl: url },
           }, timestamp);
-          await this.transact(changed, { operation: 'public-base.set', restart: false });
+          await this.transact(changed, { operation: 'subscription-base.set', restart: false });
           return { revision: changed.revision, csrf: this.commitMutationSession(authorized) };
         }
         if (op === 'exit.select') {
