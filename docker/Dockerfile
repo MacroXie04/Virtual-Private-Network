@@ -2,7 +2,7 @@
 
 # Build the required embedded Tailscale outbound into the pinned sing-box
 # release, then copy only the static binary into the runtime image.
-FROM golang:1.26.7-alpine3.24@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS sing-box-build
+FROM golang:1.27.1-alpine3.24@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS sing-box-build
 
 ENV GOPROXY=https://proxy.golang.org \
     GOSUMDB=sum.golang.org
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN /go/bin/sing-box version | grep -Fx "sing-box version 1.13.21" \
     && /go/bin/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale"
 
-FROM node:24.20.0-alpine3.24@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+FROM node:26.8.1-alpine3.24@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3
 
 RUN addgroup -S -g 11000 vpn-runtime \
     && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11000 -G vpn-runtime vpn-runtime \
