@@ -1,5 +1,7 @@
 # Multi-user VPN gateway
 
+[![CI](https://github.com/MacroXie04/Virtual-Private-Network/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MacroXie04/Virtual-Private-Network/actions/workflows/ci.yml)
+
 A multi-user VLESS WebSocket gateway with Cloudflare as its only public ingress and a selected Tailscale Exit Node as its only VPN egress.
 
 ```text
@@ -144,3 +146,8 @@ Repository tests and static configuration checks do not prove the external DNS, 
 ```bash
 npm test
 ```
+
+GitHub CI also validates shell and Go sources, the rendered Compose security
+boundary, complete Git secret history, both amd64 images, their pinned binaries,
+and a real rendered sing-box configuration. It uses synthetic settings only and
+never receives deployment credentials or publishes an image.
