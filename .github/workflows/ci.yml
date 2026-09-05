@@ -173,6 +173,35 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Require fail-closed bind source declarations
+        run: |
+          set -euo pipefail
+          ruby -ryaml -e '
+            compose = YAML.safe_load(
+              File.read("docker-compose.yml"),
+              permitted_classes: [],
+              permitted_symbols: [],
+              aliases: false
+            )
+            expected = [
+              ["cloudflared", "/run/secrets/cloudflare-tunnel-token"],
+              ["vpn-gateway", "/run/secrets/tailscale-api-key"],
+              ["vpn-gateway", "/run/secrets/tailscale-auth-key"]
+            ]
+            actual = []
+            compose.fetch("services").each do |service, definition|
+              definition.fetch("volumes", []).each do |volume|
+                next unless volume.is_a?(Hash) && volume["type"] == "bind"
+
+                identity = [service, volume["target"]]
+                actual << identity
+                abort "bind #{identity.join(":")} must disable host-path creation" unless
+                  volume.dig("bind", "create_host_path") == false
+              end
+            end
+            abort "unexpected Compose bind mounts" unless actual.sort == expected.sort
+          '
+
       - name: Render the Compose model
         run: |
           set -euo pipefail
@@ -188,7 +217,14 @@ jobs:
         run: |
           set -euo pipefail
           jq --exit-status --arg workspace "$GITHUB_WORKSPACE" '
+            def normalize_bind:
+              if .type == "bind" and .bind == {} then
+                .bind = {"create_host_path": false}
+              else
+                .
+              end;
             (.services["vpn-gateway"].volumes
+              | map(normalize_bind)
               | map({key: .target, value: .})
               | from_entries) as $gateway_mounts
             | (.services | keys | sort) == ["cloudflared", "vpn-gateway"]
@@ -309,7 +345,7 @@ jobs:
             and (.services.cloudflared | has("environment") | not)
             and (.services.cloudflared.cap_add | sort)
               == (["SETGID", "SETPCAP", "SETUID"] | sort)
-            and .services.cloudflared.volumes == [{
+            and (.services.cloudflared.volumes | map(normalize_bind)) == [{
               "type": "bind",
               "source": "/dev/null",
               "target": "/run/secrets/cloudflare-tunnel-token",
