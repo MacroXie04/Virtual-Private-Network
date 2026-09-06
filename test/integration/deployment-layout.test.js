@@ -22,13 +22,13 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
     controller,
   ] = await Promise.all([
     readProjectFile('package.json'),
-    readProjectFile('server/install.sh'),
-    readProjectFile('server/vpn-gateway-controller.service'),
-    readProjectFile('server/vpn-gateway-sing-box.service'),
-    readProjectFile('server/vpn-gateway-admin.service'),
-    readProjectFile('server/vpn-gateway-subscription.service'),
-    readProjectFile('src/repository.js'),
-    readProjectFile('src/controller.js'),
+    readProjectFile('deploy/systemd/install.sh'),
+    readProjectFile('deploy/systemd/vpn-gateway-controller.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-sing-box.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-admin.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-subscription.service'),
+    readProjectFile('src/state/repository.js'),
+    readProjectFile('src/control/controller.js'),
   ]);
   const packageJson = JSON.parse(packageText);
 
@@ -280,8 +280,8 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
   assert.match(repository, /const PRIVATE_GID = SERVICE_UID === 0 \? 0 : SERVICE_GID/u);
   assert.match(repository, /await handle\.chown\(ownerUid, ownerGid\)/u);
   assert.match(controller, /normalizePrivateHandle\(handle, 'maintenance marker'\)/u);
-  assert.match(controllerUnit, /ExecStartPre=.*node \/opt\/vpn-gateway\/src\/bootstrap\.js/u);
-  assert.match(controllerUnit, /ExecStart=.*node \/opt\/vpn-gateway\/src\/controller-server\.js/u);
+  assert.match(controllerUnit, /ExecStartPre=.*node \/opt\/vpn-gateway\/src\/state\/bootstrap\.js/u);
+  assert.match(controllerUnit, /ExecStart=.*node \/opt\/vpn-gateway\/src\/control\/controller-server\.js/u);
   assert.match(controllerUnit, /^Group=root$/mu);
   assert.match(controllerUnit, /^RuntimeDirectoryMode=0751$/mu);
   assert.match(controllerUnit, /ExecStartPost=\/usr\/bin\/systemctl --no-block start vpn-gateway-subscription\.service vpn-gateway-admin\.service vpn-gateway-tunnel\.service/u);
@@ -291,8 +291,8 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
   assert.match(subscriptionUnit, /After=vpn-gateway-controller\.service/u);
   assert.match(singBoxUnit, /BindsTo=vpn-gateway-controller\.service/u);
   assert.doesNotMatch(singBoxUnit, /^After=.*vpn-gateway-controller\.service/mu);
-  assert.match(adminUnit, /node \/opt\/vpn-gateway\/src\/admin-server\.js/u);
-  assert.match(subscriptionUnit, /node \/opt\/vpn-gateway\/src\/subscription-server\.js/u);
+  assert.match(adminUnit, /node \/opt\/vpn-gateway\/src\/http\/admin-server\.js/u);
+  assert.match(subscriptionUnit, /node \/opt\/vpn-gateway\/src\/http\/subscription-server\.js/u);
 });
 
 test('container pins supported runtimes and Compose exposes origins only through cloudflared', async () => {
@@ -306,12 +306,12 @@ test('container pins supported runtimes and Compose exposes origins only through
     dockerignore,
     exampleEnvironment,
   ] = await Promise.all([
-    readProjectFile('docker/Dockerfile'),
+    readProjectFile('deploy/docker/Dockerfile'),
     readProjectFile('docker-compose.yml'),
-    readProjectFile('docker/entrypoint.sh'),
-    readProjectFile('docker/cloudflared.Dockerfile'),
-    readProjectFile('docker/cloudflared-guard.go'),
-    readProjectFile('docker/compose-up.sh'),
+    readProjectFile('deploy/docker/entrypoint.sh'),
+    readProjectFile('deploy/docker/cloudflared.Dockerfile'),
+    readProjectFile('deploy/docker/cloudflared-guard.go'),
+    readProjectFile('deploy/docker/compose-up.sh'),
     readProjectFile('.dockerignore'),
     readProjectFile('.env.example'),
   ]);
@@ -368,8 +368,8 @@ test('container pins supported runtimes and Compose exposes origins only through
   assert.match(composeLauncher, /"\$token_size" -le 4096/u);
   assert.match(composeLauncher, /exec docker compose --project-directory/u);
   assert.doesNotMatch(composeLauncher, /(?:cat|head|tail)\s+.*token/u);
-  assert.match(dockerignore, /!docker\/cloudflared\.Dockerfile/u);
-  assert.match(dockerignore, /!docker\/cloudflared-guard\.go/u);
+  assert.match(dockerignore, /!deploy\/docker\/cloudflared\.Dockerfile/u);
+  assert.match(dockerignore, /!deploy\/docker\/cloudflared-guard\.go/u);
   assert.match(exampleEnvironment, /^CLOUDFLARE_TUNNEL_TOKEN_FILE=\/absolute\/path\/to\/cloudflare-tunnel-token$/mu);
   assert.match(exampleEnvironment, /^MIGRATE_REALITY=$/mu);
   assert.doesNotMatch(exampleEnvironment, /(?:^|\n)TUNNEL_TOKEN=/u);

@@ -4,8 +4,11 @@
 !npm-shrinkwrap.json
 !src/
 !src/**
-!docker/
-!docker/Dockerfile
-!docker/entrypoint.sh
-!docker/cloudflared.Dockerfile
-!docker/cloudflared-guard.go
+!deploy/
+deploy/*
+!deploy/docker/
+deploy/docker/*
+!deploy/docker/Dockerfile
+!deploy/docker/entrypoint.sh
+!deploy/docker/cloudflared.Dockerfile
+!deploy/docker/cloudflared-guard.go

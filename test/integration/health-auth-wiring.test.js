@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createControllerApplication } from '../../src/controller-server.js';
-import { RevisionRepository } from '../../src/repository.js';
-import { fixtureState } from '../unit/core-v2-fixture.js';
+import { createControllerApplication } from '../../src/control/controller-server.js';
+import { RevisionRepository } from '../../src/state/repository.js';
+import { fixtureState } from '../fixtures/state.js';
 
 test('controller runtime receives the exact authenticated health inbound credentials', async (t) => {
   const parent = await mkdtemp(path.join(os.tmpdir(), 'vpn-health-wiring-'));

@@ -2,7 +2,7 @@ services:
   vpn-gateway:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: deploy/docker/Dockerfile
     image: vpn-gateway:local
     restart: unless-stopped
     init: true
@@ -74,7 +74,7 @@ services:
       - /run:size=4m,mode=0755,nosuid,nodev,noexec
       - /tmp:size=16m,mode=1777,nosuid,nodev,noexec
     healthcheck:
-      test: ["CMD", "node", "/app/src/healthcheck.js"]
+      test: ["CMD", "node", "/app/src/runtime/healthcheck.js"]
       interval: 30s
       timeout: 10s
       start_period: 20s
@@ -89,7 +89,7 @@ services:
   cloudflared:
     build:
       context: .
-      dockerfile: docker/cloudflared.Dockerfile
+      dockerfile: deploy/docker/cloudflared.Dockerfile
     image: vpn-cloudflared:local
     restart: unless-stopped
     # The launcher starts as root only long enough to open and validate the

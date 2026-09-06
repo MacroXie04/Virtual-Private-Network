@@ -8,7 +8,7 @@ import {
   parseOriginForm,
   sendGenericError,
   sendResponse,
-} from '../../src/http-common.js';
+} from '../../src/http/http-common.js';
 
 function request(address, { method = 'GET', path = '/', headers = {} } = {}) {
   return new Promise((resolve, reject) => {

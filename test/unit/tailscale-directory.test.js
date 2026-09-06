@@ -4,7 +4,7 @@ import {
   ExitNodeDirectoryError,
   fetchExitNodes,
   selectExitNode,
-} from '../../src/tailscale.js';
+} from '../../src/runtime/tailscale.js';
 
 function response(body, { ok = true, status = 200 } = {}) {
   return {

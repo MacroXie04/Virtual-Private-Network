@@ -4,7 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ControlError, createControlClient } from '../../src/control-client.js';
+import { ControlError, createControlClient } from '../../src/control/control-client.js';
 
 async function controller(t, responder) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'vpn-control-test-'));

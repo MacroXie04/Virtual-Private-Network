@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import { probeSocksConnect } from '../../src/health-probe.js';
+import { probeSocksConnect } from '../../src/runtime/health-probe.js';
 
 class FakeSocket extends EventEmitter {
   constructor(replyStatus, { authStatus = 0, method = 2 } = {}) {

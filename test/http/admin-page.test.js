@@ -5,7 +5,7 @@ import {
   renderDashboardPage,
   renderLoginPage,
   renderSecretPage,
-} from '../../src/admin-page.js';
+} from '../../src/http/admin-page.js';
 
 test('admin pages are script-free and escape all state values', () => {
   const page = renderDashboardPage({

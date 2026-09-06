@@ -70,29 +70,29 @@ jobs:
       - name: Validate shell scripts
         run: |
           set -euo pipefail
-          bash -n server/install.sh
+          bash -n deploy/systemd/install.sh
           for script in \
-            docker/compose-up.sh \
-            docker/entrypoint.sh \
-            server/sing-box-wrapper.sh; do
+            deploy/docker/compose-up.sh \
+            deploy/docker/entrypoint.sh \
+            deploy/systemd/sing-box-wrapper.sh; do
             dash -n "$script"
           done
           shellcheck --severity=warning \
-            server/install.sh \
-            docker/compose-up.sh \
-            docker/entrypoint.sh \
-            server/sing-box-wrapper.sh
+            deploy/systemd/install.sh \
+            deploy/docker/compose-up.sh \
+            deploy/docker/entrypoint.sh \
+            deploy/systemd/sing-box-wrapper.sh
 
       - name: Validate the cloudflared guard
         run: |
           set -euo pipefail
-          gofmt -d docker/cloudflared-guard.go | tee "$RUNNER_TEMP/gofmt.diff"
+          gofmt -d deploy/docker/cloudflared-guard.go | tee "$RUNNER_TEMP/gofmt.diff"
           test ! -s "$RUNNER_TEMP/gofmt.diff"
-          GOOS=linux GOARCH=amd64 go vet docker/cloudflared-guard.go
+          GOOS=linux GOARCH=amd64 go vet deploy/docker/cloudflared-guard.go
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags '-s -w -buildid=' \
             -o "$RUNNER_TEMP/cloudflared-guard" \
-            docker/cloudflared-guard.go
+            deploy/docker/cloudflared-guard.go
 
   node-tests:
     name: Node ${{ matrix.node-version }}
@@ -141,13 +141,26 @@ jobs:
           sudo "$(command -v node)" --test \
             --test-reporter=tap \
             --test-name-pattern='^root repository fixes private ownership' \
-            test/unit/core-repository-v2.test.js \
+            test/unit/repository.test.js \
             | tee "$RUNNER_TEMP/root-ownership.tap"
           grep -Fx 'ok 1 - root repository fixes private ownership while assigning only projection groups' \
             "$RUNNER_TEMP/root-ownership.tap"
           grep -Fx '# tests 1' "$RUNNER_TEMP/root-ownership.tap"
           grep -Fx '# pass 1' "$RUNNER_TEMP/root-ownership.tap"
           grep -Fx '# skipped 0' "$RUNNER_TEMP/root-ownership.tap"
+
+      - name: Run the root installation and upgrade regressions
+        if: matrix.node-version == '24.20.0'
+        run: |
+          set -euo pipefail
+          sudo "$(command -v node)" --test \
+            --test-reporter=tap \
+            test/integration/source-layout-upgrade.test.js \
+            | tee "$RUNNER_TEMP/root-source-layout.tap"
+          grep -Ex '# tests [1-9][0-9]*' "$RUNNER_TEMP/root-source-layout.tap"
+          grep -Ex '# pass [1-9][0-9]*' "$RUNNER_TEMP/root-source-layout.tap"
+          grep -Fx '# fail 0' "$RUNNER_TEMP/root-source-layout.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/root-source-layout.tap"
 
   compose-policy:
     name: Compose policy
@@ -281,7 +294,7 @@ jobs:
             and .services["vpn-gateway"].image == "vpn-gateway:local"
             and .services["vpn-gateway"].build == {
               "context": $workspace,
-              "dockerfile": "docker/Dockerfile"
+              "dockerfile": "deploy/docker/Dockerfile"
             }
             and (.services["vpn-gateway"] | has("network_mode") | not)
             and .services["vpn-gateway"].networks == {"default": null}
@@ -294,7 +307,7 @@ jobs:
               "/tmp:size=16m,mode=1777,nosuid,nodev,noexec"
             ]
             and .services["vpn-gateway"].healthcheck == {
-              "test": ["CMD", "node", "/app/src/healthcheck.js"],
+              "test": ["CMD", "node", "/app/src/runtime/healthcheck.js"],
               "timeout": "10s",
               "interval": "30s",
               "retries": 3,
@@ -312,7 +325,7 @@ jobs:
             and .services.cloudflared.image == "vpn-cloudflared:local"
             and .services.cloudflared.build == {
               "context": $workspace,
-              "dockerfile": "docker/cloudflared.Dockerfile"
+              "dockerfile": "deploy/docker/cloudflared.Dockerfile"
             }
             and .services.cloudflared.pids_limit == 64
             and .services.cloudflared.restart == "unless-stopped"
@@ -512,7 +525,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: docker/Dockerfile
+          file: deploy/docker/Dockerfile
           platforms: linux/amd64
           tags: vpn-gateway:local
           pull: true
@@ -528,7 +541,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: docker/cloudflared.Dockerfile
+          file: deploy/docker/cloudflared.Dockerfile
           platforms: linux/amd64
           tags: vpn-cloudflared:local
           pull: true
@@ -565,7 +578,7 @@ jobs:
             --input-type=module \
             --eval '
               import { readFile } from "node:fs/promises";
-              import { renderSingBoxConfig } from "/app/src/render.js";
+              import { renderSingBoxConfig } from "/app/src/core/render.js";
               const state = JSON.parse(await readFile("/tmp/state.json", "utf8"));
               process.stdout.write(`${JSON.stringify(renderSingBoxConfig(state), null, 2)}\n`);
             ' >"$RUNNER_TEMP/sing-box.json"
@@ -591,7 +604,7 @@ jobs:
             and .[0].Config.WorkingDir == "/app"
             and .[0].Config.Volumes == {"/data": {}}
             and .[0].Config.Healthcheck.Test
-              == ["CMD", "node", "/app/src/healthcheck.js"]
+              == ["CMD", "node", "/app/src/runtime/healthcheck.js"]
             and all(.[0].Config.Env[]; test("TOKEN="; "i") | not)
           ' "$RUNNER_TEMP/gateway-image.json"
           jq --exit-status '
@@ -616,7 +629,7 @@ jobs:
 
           grep -Fx 'app/package.json' "$RUNNER_TEMP/gateway-files.txt"
           grep -Fx 'app/entrypoint.sh' "$RUNNER_TEMP/gateway-files.txt"
-          grep -Fx 'app/src/render.js' "$RUNNER_TEMP/gateway-files.txt"
+          grep -Fx 'app/src/core/render.js' "$RUNNER_TEMP/gateway-files.txt"
           grep -Fx 'usr/local/bin/sing-box' "$RUNNER_TEMP/gateway-files.txt"
           grep -Fx 'usr/local/bin/cloudflared' "$RUNNER_TEMP/tunnel-files.txt"
           grep -Fx 'usr/local/bin/cloudflared-guard' "$RUNNER_TEMP/tunnel-files.txt"
@@ -626,7 +639,7 @@ jobs:
           test "$(docker run --rm --entrypoint stat vpn-gateway:local \
             -c '%u:%g:%a:%h' /app/package.json)" = '0:0:644:1'
           test "$(docker run --rm --entrypoint stat vpn-gateway:local \
-            -c '%u:%g:%a:%h' /app/src/render.js)" = '0:0:644:1'
+            -c '%u:%g:%a:%h' /app/src/core/render.js)" = '0:0:644:1'
           test "$(docker run --rm --entrypoint stat vpn-gateway:local \
             -c '%u:%g:%a:%h' /usr/local/bin/sing-box)" = '0:0:755:1'
 
@@ -647,7 +660,7 @@ jobs:
           docker cp "$gateway_id:/app/entrypoint.sh" "$RUNNER_TEMP/image-entrypoint.sh"
           diff -ru --no-dereference src "$RUNNER_TEMP/gateway-source"
           diff -u package.json "$RUNNER_TEMP/image-package.json"
-          diff -u docker/entrypoint.sh "$RUNNER_TEMP/image-entrypoint.sh"
+          diff -u deploy/docker/entrypoint.sh "$RUNNER_TEMP/image-entrypoint.sh"
 
           if docker run --rm vpn-cloudflared:local unsupported \
             >"$RUNNER_TEMP/guard-output.txt" 2>&1; then
@@ -746,7 +759,7 @@ jobs:
             and .[0].Config.Cmd == null
             and .[0].Config.WorkingDir == "/app"
             and .[0].Config.Healthcheck.Test
-              == ["CMD", "node", "/app/src/healthcheck.js"]
+              == ["CMD", "node", "/app/src/runtime/healthcheck.js"]
             and .[0].Config.Healthcheck.Interval == 30000000000
             and .[0].Config.Healthcheck.Timeout == 10000000000
             and .[0].Config.Healthcheck.StartPeriod == 20000000000
