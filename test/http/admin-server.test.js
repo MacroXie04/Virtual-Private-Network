@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { createAdminServer } from '../../src/admin-server.js';
-import { ControlError } from '../../src/control-client.js';
-import { FixedWindowRateLimiter } from '../../src/http-common.js';
+import { createAdminServer } from '../../src/http/admin-server.js';
+import { ControlError } from '../../src/control/control-client.js';
+import { FixedWindowRateLimiter } from '../../src/http/http-common.js';
 
 function request(address, requestPath, { method = 'GET', headers = {}, body = '' } = {}) {
   return new Promise((resolve, reject) => {

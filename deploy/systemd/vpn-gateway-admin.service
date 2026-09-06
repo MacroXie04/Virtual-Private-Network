@@ -1,0 +1,46 @@
+[Unit]
+Description=VPN gateway local administration service
+After=vpn-gateway-controller.service
+BindsTo=vpn-gateway-controller.service
+PartOf=vpn-gateway.target
+
+[Service]
+Type=simple
+User=vpn-admin
+Group=vpn-admin
+UMask=0077
+WorkingDirectory=/opt/vpn-gateway
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/vpn-gateway/admin.env
+ExecStart=/usr/bin/env DATA_DIR=/var/lib/vpn-gateway CONTROLLER_SOCKET=/run/vpn-gateway/controller.sock ADMIN_HOST=127.0.0.1 ADMIN_PORT=8081 node /opt/vpn-gateway/src/http/admin-server.js
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=330s
+KillMode=mixed
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/var/lib/vpn-gateway /run/vpn-gateway
+
+[Install]
+WantedBy=vpn-gateway.target

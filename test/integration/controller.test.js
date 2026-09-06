@@ -3,10 +3,10 @@ import { lstat, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { GatewayController } from '../../src/controller.js';
-import { ControllerSessions } from '../../src/controller-sessions.js';
-import { createAdminScryptRecord, verifySubscriptionToken } from '../../src/credentials.js';
-import { RevisionRepository } from '../../src/repository.js';
+import { GatewayController } from '../../src/control/controller.js';
+import { ControllerSessions } from '../../src/control/controller-sessions.js';
+import { createAdminScryptRecord, verifySubscriptionToken } from '../../src/core/credentials.js';
+import { RevisionRepository } from '../../src/state/repository.js';
 
 const UUIDS = [
   '11111111-1111-4111-8111-111111111111',

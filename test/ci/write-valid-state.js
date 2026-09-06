@@ -1,5 +1,5 @@
 import { writeFile } from 'node:fs/promises';
-import { fixtureState } from '../unit/core-v2-fixture.js';
+import { fixtureState } from '../fixtures/state.js';
 
 const outputPath = process.argv[2];
 if (!outputPath) throw new TypeError('an output path is required');

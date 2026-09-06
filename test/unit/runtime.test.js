@@ -6,7 +6,7 @@ import {
   SystemdSingBoxRuntime,
   validateSingBoxConfig,
   waitForDataPath,
-} from '../../src/runtime.js';
+} from '../../src/runtime/runtime.js';
 
 test('config validation invokes a fixed executable without a shell and sanitizes failure', async () => {
   const calls = [];

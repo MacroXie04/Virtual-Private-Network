@@ -9,8 +9,8 @@
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
-    "start": "node src/controller-server.js",
-    "bootstrap": "node src/bootstrap.js",
-    "healthcheck": "node src/healthcheck.js"
+    "start": "node src/control/controller-server.js",
+    "bootstrap": "node src/state/bootstrap.js",
+    "healthcheck": "node src/runtime/healthcheck.js"
   }
 }

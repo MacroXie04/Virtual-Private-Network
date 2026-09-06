@@ -5,8 +5,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSubscriptionServer, readSubscriptionView } from '../../src/subscription-server.js';
-import { FixedWindowRateLimiter } from '../../src/http-common.js';
+import { createSubscriptionServer, readSubscriptionView } from '../../src/http/subscription-server.js';
+import { FixedWindowRateLimiter } from '../../src/http/http-common.js';
 
 function tokenHash(token) {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;

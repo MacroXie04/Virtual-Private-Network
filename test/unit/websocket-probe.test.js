@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import { probeWebSocketUpgrade } from '../../src/websocket-probe.js';
+import { probeWebSocketUpgrade } from '../../src/runtime/websocket-probe.js';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 

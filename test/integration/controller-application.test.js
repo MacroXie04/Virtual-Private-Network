@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createControlClient } from '../../src/control-client.js';
+import { fileURLToPath } from 'node:url';
+import { createControlClient } from '../../src/control/control-client.js';
 import {
   createControllerApplication,
   notifyServiceReady,
   runDataPathWatchdog,
-} from '../../src/controller-server.js';
-import { RevisionRepository } from '../../src/repository.js';
-import { fixtureState } from '../unit/core-v2-fixture.js';
+  spawnWebProcesses,
+} from '../../src/control/controller-server.js';
+import { RevisionRepository } from '../../src/state/repository.js';
+import { fixtureState } from '../fixtures/state.js';
 
 function deferred() {
   let resolve;
@@ -44,6 +47,58 @@ async function setup() {
   };
   return { parent, dataDir, socketPath, repository, env };
 }
+
+test('supervised HTTP processes resolve existing entry files from the application root', async (t) => {
+  const calls = [];
+  const failures = [];
+  const web = spawnWebProcesses({
+    env: {
+      DATA_DIR: '/data',
+      CONTROLLER_SOCKET: '/run/vpn-gateway/controller.sock',
+      ADMIN_PUBLIC_HOSTNAME: 'admin.example.com',
+      TS_AUTH_KEY_FILE: '/private/tailscale-key',
+      CLOUDFLARE_TUNNEL_TOKEN_FILE: '/private/tunnel-token',
+    },
+    spawn(command, args, options) {
+      const child = new EventEmitter();
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = (signal) => {
+        child.signalCode = signal;
+        queueMicrotask(() => child.emit('exit', null, signal));
+        return true;
+      };
+      calls.push({ command, args, options, child });
+      return child;
+    },
+    onUnexpectedExit: (error) => failures.push(error),
+  });
+  t.after(() => web.stop());
+
+  assert.equal(calls.length, 2);
+  const projectRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
+  for (const [index, call] of calls.entries()) {
+    assert.equal(call.command, process.execPath);
+    assert.equal(call.args.length, 1);
+    assert.equal(path.isAbsolute(call.args[0]), true);
+    assert.equal((await lstat(call.args[0])).isFile(), true);
+    assert.equal(path.resolve(call.options.cwd), projectRoot);
+    assert.deepEqual(call.options.stdio, ['ignore', 'inherit', 'inherit']);
+    assert.equal(call.options.uid, 11001 + index);
+    assert.equal(call.options.gid, 11001 + index);
+    assert.equal(call.options.env.TS_AUTH_KEY_FILE, undefined);
+    assert.equal(call.options.env.CLOUDFLARE_TUNNEL_TOKEN_FILE, undefined);
+  }
+  const subscription = await import(calls[0].args[0]);
+  const administration = await import(calls[1].args[0]);
+  assert.equal(typeof subscription.createSubscriptionServer, 'function');
+  assert.equal(typeof administration.createAdminServer, 'function');
+  assert.equal(calls[0].options.env.DATA_DIR, '/data');
+  assert.equal(calls[1].options.env.CONTROLLER_SOCKET, '/run/vpn-gateway/controller.sock');
+  assert.equal(calls[1].options.env.ADMIN_PUBLIC_HOSTNAME, 'admin.example.com');
+  await web.stop();
+  assert.deepEqual(failures, []);
+});
 
 test('systemd readiness notification is explicit, fixed, and optional', async () => {
   const calls = [];

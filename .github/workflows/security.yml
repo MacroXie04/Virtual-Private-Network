@@ -73,7 +73,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags '-s -w -buildid=' \
             -o "$RUNNER_TEMP/cloudflared-guard" \
-            docker/cloudflared-guard.go
+            deploy/docker/cloudflared-guard.go
 
       - name: Analyze Go
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4

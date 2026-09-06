@@ -12,13 +12,13 @@ const readProjectFile = (relativePath) => readFile(path.join(projectRoot, relati
 
 test('bare Cloudflare deployment is pinned, credential-backed, and loopback-only', async () => {
   const [installer, target, tunnel, controller, singBox, subscription, admin] = await Promise.all([
-    readProjectFile('server/install.sh'),
-    readProjectFile('server/vpn-gateway.target'),
-    readProjectFile('server/vpn-gateway-tunnel.service'),
-    readProjectFile('server/vpn-gateway-controller.service'),
-    readProjectFile('server/vpn-gateway-sing-box.service'),
-    readProjectFile('server/vpn-gateway-subscription.service'),
-    readProjectFile('server/vpn-gateway-admin.service'),
+    readProjectFile('deploy/systemd/install.sh'),
+    readProjectFile('deploy/systemd/vpn-gateway.target'),
+    readProjectFile('deploy/systemd/vpn-gateway-tunnel.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-controller.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-sing-box.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-subscription.service'),
+    readProjectFile('deploy/systemd/vpn-gateway-admin.service'),
   ]);
 
   assert.match(installer, /readonly REQUIRED_CLOUDFLARED_VERSION=2026\.8\.3/u);
@@ -111,14 +111,14 @@ test('bare Cloudflare deployment is pinned, credential-backed, and loopback-only
 });
 
 test('bare installer keeps valid shell syntax', async () => {
-  await execFile('bash', ['-n', path.join(projectRoot, 'server/install.sh')], {
+  await execFile('bash', ['-n', path.join(projectRoot, 'deploy/systemd/install.sh')], {
     timeout: 10_000,
     maxBuffer: 64 * 1024,
   });
 });
 
-test('README links the required official Cloudflare guidance', async () => {
-  const readme = await readProjectFile('README.md');
+test('deployment guide links the required official Cloudflare guidance', async () => {
+  const readme = await readProjectFile('docs/deployment.md');
   assert.match(readme, /developers\.cloudflare\.com\/cloudflare-one\/networks\/connectors\/cloudflare-tunnel\/get-started\/create-remote-tunnel\//u);
   assert.match(readme, /developers\.cloudflare\.com\/network\/websockets\//u);
   assert.match(readme, /developers\.cloudflare\.com\/cloudflare-one\/access-controls\/applications\/http-apps\/self-hosted-public-app\//u);
