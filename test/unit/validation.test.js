@@ -8,8 +8,9 @@ import {
   validateSubscriptionPublicBaseUrl,
   validateWebSocketPath,
 } from '../../src/core/validation.js';
-import { validateState, validateSubscriptionView } from '../../src/core/state-schema.js';
-import { buildSubscriptionView } from '../../src/core/render.js';
+import { validateState } from '../../src/core/state-schema.js';
+import { validateSubscriptionView } from '../../src/core/subscription-view.js';
+import { buildSubscriptionView } from '../../src/core/subscription-view.js';
 import { fixtureState } from '../fixtures/state.js';
 
 test('public Tunnel settings accept only canonical dedicated DNS origins', () => {

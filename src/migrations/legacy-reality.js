@@ -8,7 +8,7 @@ import { ValidationError, expectString } from '../core/validation.js';
 const X25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
 const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
 
-export function validateLegacyRealityKey(value, path) {
+function validateLegacyRealityKey(value, path) {
   const key = expectString(value, path, { min: 43, max: 43 });
   if (!/^[A-Za-z0-9_-]{43}$/u.test(key)) {
     throw new ValidationError(path, 'must be a canonical unpadded base64url X25519 key');

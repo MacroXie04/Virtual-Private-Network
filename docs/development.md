@@ -6,21 +6,24 @@ Use Node.js `>=24.20.0 <25`, matching `package.json` and the deployment runtime.
 
 ```text
 src/
-  core/         Credentials, lifecycle rules, configuration rendering, schemas, validation
-  control/      Controller orchestration, control server/client, sessions
-  http/         Admin page, admin/subscription servers, shared HTTP behavior
+  core/         Domain rules, server configuration, client subscriptions, public projection
+  control/      Application lifecycle, serialized authority, sockets, sessions
+    operations/ User and gateway mutations behind the shared authorization boundary
+  http/         HTTP applications, authentication, routes, request and response helpers
   runtime/      Process runtime, Tailscale, routed probes, healthcheck entry point
   state/        Bootstrap and persistent state repository
   migrations/   Legacy state readers and migration entry points
 deploy/
   docker/       Dockerfiles, container entry point, Compose launcher, Tunnel guard
-  systemd/      Bare-metal installer, sing-box wrapper, service units and target
+  systemd/      Installer entry point, sing-box wrapper, service units and target
+    installer/  Ordered installation, migration, backup, rollback and service phases
 test/
   unit/         Individual modules and behavior
   http/         HTTP routes, clients, authentication, and response behavior
   integration/  Cross-module behavior, process wiring, and deployment guarantees
-  fixtures/     Shared synthetic state fixtures
-  ci/           Helpers used by CI checks
+  fixtures/     Synthetic state and isolated repository/controller/installer setup
+  helpers/      HTTP request and server setup shared by behavior tests
+  ci/           Executable checks called by CI
 docs/           Deployment, operations, and development guides
 ```
 
@@ -36,6 +39,24 @@ Keep Compose configuration, package metadata, environment examples, and tool con
 - Put setup instructions in [deployment](deployment.md), ongoing administration and recovery instructions in [operations](operations.md), and contributor guidance here. Keep the [README](../README.md) focused on the gateway overview and prerequisites.
 
 Use direct relative imports between modules and update consumers when a module moves. Do not add compatibility files at retired paths. When moving an executable, update npm scripts, deployment launchers, service units, child-process resolution, and tests together. Preserve the application-root working directory of supervised HTTP processes.
+
+## Module responsibilities
+
+Split files when they own separate policies or workflows, rather than dividing at an arbitrary line count. Keep a policy and its invariants together. Import the module that owns a function directly; startup files only assemble and run the application.
+
+| Area | Responsibilities and entry points |
+| --- | --- |
+| Server configuration | `core/server-render.js` builds sing-box configuration and routed health settings. `server-config-model.js` owns shared configuration primitives; `server-config-assert.js` and `single-exit-config-assert.js` enforce their exact routing contracts. |
+| Client subscriptions | `core/client-subscriptions.js` owns client formats. `subscription-view.js` builds and validates the public projection; `state-schema.js` validates private canonical state. `exit-profiles.js` owns per-exit identities and credentials. |
+| Controller | `control/controller.js` owns sessions, serialization and authority. `request-dispatch.js` separates read operations from mutations; `operations/mutations.js` applies replay, CSRF and revision checks before dispatching to `users.js` or `gateway.js`. `runtime-transactions.js` owns runtime commit/rollback and credential retirement; `ingress-recovery.js` owns legacy ingress recovery. |
+| Application and sockets | `control/application.js` coordinates startup, readiness and shutdown. `web-processes.js` owns supervised HTTP children. `control-socket.js`, `socket-protocol.js` and `socket-files.js` separate socket serving, message constraints and filesystem checks. `controller-server.js` remains the executable used by npm and deployment. |
+| HTTP | `http/admin-application.js` composes request checks, authentication and routes from `admin-request.js`, `admin-auth.js` and `admin-routes.js`. `subscription-application.js` serves projections read through `subscription-data.js`. The two `*-server.js` files only start the services; `http-service.js`, `request-input.js` and `rate-limit.js` own shared transport, input and limiter behavior. |
+| Persistent state | `state/repository.js` coordinates immutable revisions. `repository-files.js`, `repository-pointers.js`, `revision-directory.js`, `revision-content.js`, `revision-manifest.js` and `revision-retention.js` own their respective validation and filesystem operations. Shared limits and errors live in `repository-policy.js`. |
+| Initialization | `state/bootstrap.js` is the CLI. `bootstrap-service.js` selects initialization, existing-state recovery or ingress migration; the corresponding bootstrap modules own those workflows. Secret-file reads, credential preparation and candidate validation each have separate modules. |
+| Legacy migration | `migrations/migrate-v1.js` coordinates migration. `legacy-v1-parse.js`, `legacy-v1-source.js` and `legacy-v1-state.js` interpret the old format. The migration marker, backup, recovery and lineage modules preserve transaction evidence. `legacy-v2-state.js` and `legacy-v2-policy.js` validate historical state and configuration. |
+| Bare-metal installation | `deploy/systemd/install.sh` validates and sources a fixed ordered list of `installer/*.sh` phases. These execute in one shell so error handling, traps and transaction state retain their original scope. Keep all modules with the launcher when distributing the repository. |
+
+Deployment scripts that invoke JavaScript functions must import their owning modules, not executable launchers. For example, import `bootstrap` from `state/bootstrap-service.js`, `readSecretFile` from `state/bootstrap-files.js`, and `inspectLegacyV1` from `migrations/legacy-v1-source.js`; keep command execution at `state/bootstrap.js`.
 
 ## Commands
 
@@ -63,7 +84,13 @@ never receives deployment credentials or publishes an image.
 
 Run the full suite on supported Node 24. Linux ownership and service/deployment regressions must also pass on Linux; a passing macOS run cannot establish those guarantees.
 
-When changing deployment layout, verify a fresh installation, an upgrade from the retired flat layout, and failed-upgrade restoration of the prior source tree and service units. The installer must remove only the enumerated retired flat source files inside its existing backup and rollback transaction. Check that both supervised HTTP entry files exist and retain the application-root working directory.
+Group tests by behavior: controller authorization, credentials, users, health and transactions; admin authentication, origin checks, mutations and rate limits; bootstrap initialization, recovery and ingress migration; and migration parsing, recovery and lineage. Share setup through fixtures or helpers without hiding the assertions. HTTP entry-point tests launch the real executables, check responses and verify graceful termination.
+
+The workflow declares jobs, dependencies, permissions and pinned versions. Longer checks live in `test/ci/`: `validate-shell.sh` checks the launcher and all installer/CI modules; the Compose scripts validate declarations and rendered security boundaries; `verify-image-*.sh` and `verify-stopped-containers.sh` check image/runtime contracts; `scan-*.sh` retain the secret and vulnerability gates. `install-tool.sh` installs the workflow-pinned scanner versions. Run these scripts from the repository root unless a script documents otherwise.
+
+The container job also runs `test/ci/verify-client-exits.js` against the pinned sing-box binary. It checks the real multi-exit server and client configurations, then uses local SOCKS witnesses to verify VLESS/WebSocket credential routing, concurrent client selections, health identities, user revocation, and no fallback when an exit fails. This test runs without external network access; it does not establish Tailscale enrollment or public Cloudflare connectivity. The script includes a local Docker invocation.
+
+When changing deployment layout, verify a fresh installation, upgrades from both the retired flat layout and the previous nested layout, and failed-upgrade restoration of the prior source tree and service units. Retired application paths must be enumerated explicitly and removed inside the existing backup and rollback transaction; preserve unrelated operator files. Check that both supervised HTTP entry files exist and retain the application-root working directory.
 
 Keep the image-to-source comparison recursive as source directories grow. Update active path references in Compose, build contexts, workflows, and dependency-update configuration without changing historical secret-scanning exceptions. Configuration checks and synthetic tests complement the [live production verification](operations.md#verification); they do not replace it.
 

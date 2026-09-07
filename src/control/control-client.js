@@ -13,6 +13,8 @@ const ALLOWED_OPERATIONS = new Set([
   'user.rotateCredentials',
   'user.export',
   'exit.select',
+  'exit.add',
+  'exit.remove',
   'publicBase.set',
   'health.status',
 ]);
@@ -197,6 +199,12 @@ export function createControlClient({
     exportUser: (sessionId, userId) => request('user.export', { sessionId, userId }),
     selectExit: (sessionId, csrf, expectedRevision, deviceId) => request('exit.select', {
       sessionId, csrf, expectedRevision, deviceId,
+    }),
+    addExit: (sessionId, csrf, expectedRevision, deviceId) => request('exit.add', {
+      sessionId, csrf, expectedRevision, deviceId,
+    }),
+    removeExit: (sessionId, csrf, expectedRevision, exitId) => request('exit.remove', {
+      sessionId, csrf, expectedRevision, exitId,
     }),
     setPublicBase: (sessionId, csrf, expectedRevision, url) => request('publicBase.set', {
       sessionId, csrf, expectedRevision, url,

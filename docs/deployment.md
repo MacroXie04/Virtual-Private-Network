@@ -28,6 +28,8 @@ Cloudflare can see traffic at public TLS termination and is part of the trust bo
 
 Copy `.env.example` to `.env`, then set the five public settings, the initial Exit Node, and absolute secret-file paths. Leave `WS_PATH` empty on first bootstrap to generate a high-entropy canonical path.
 
+The initial exit is retained as the default. To let users choose additional exits, also configure `TS_API_KEY_FILE` and prepare enrollment credentials as described in [exit management](operations.md#let-users-choose-an-exit). Each additional exit enrolls a separate gateway identity in the same Tailnet; allow each identity's gateway tag to use its exit without granting peer or subnet access.
+
 ```dotenv
 TS_AUTH_KEY_FILE=/root/vpn-secrets/tailscale-auth-key
 CLOUDFLARE_TUNNEL_TOKEN_FILE=/root/vpn-secrets/cloudflare-tunnel-token
@@ -81,6 +83,6 @@ The installer validates and atomically copies the Tunnel token to `/etc/vpn-gate
 
 Cloudflare must be the only public application ingress. Deny unsolicited inbound traffic at both the provider firewall/security group and the host firewall; if management access is unavoidable, restrict it to a separately approved source or private management plane. In particular, never allow inbound TCP `443`, `8443`, `8080`, `8081`, or `20241` to the server.
 
-Allow the outbound DNS, HTTPS, Cloudflare Tunnel, and Tailscale control/DERP/STUN traffic required by current vendor documentation. Do not force VPN payload traffic through a host-level direct route: sing-box has exactly one final Tailscale outbound.
+Allow the outbound DNS, HTTPS, Cloudflare Tunnel, and Tailscale control/DERP/STUN traffic required by current vendor documentation. Do not force VPN payload traffic through a host-level direct route: every published profile and its DNS traffic route through the corresponding Tailscale endpoint, with the original endpoint retained as the default.
 
 “No public inbound exposure” means the server may retain a public IP while all unsolicited inbound paths are denied. “No public IP assigned” is different: the provider must supply outbound NAT so cloudflared, Tailscale control/DERP, DNS, package updates, and any required APIs remain reachable.

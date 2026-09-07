@@ -202,7 +202,7 @@ if [ "$legacy_state_present" = yes ] && [ "$v2_state_present" = no ]; then
       LEGACY_ENV_FILE="$DATA_ROOT/env" \
       LEGACY_CONFIG_FILE="$DATA_ROOT/config.json" \
       node --input-type=module --eval '
-        import { inspectLegacyV1 } from "/app/src/migrations/migrate-v1.js";
+        import { inspectLegacyV1 } from "/app/src/migrations/legacy-v1-source.js";
         const inspection = await inspectLegacyV1({
           envPath: process.env.LEGACY_ENV_FILE,
           configPath: process.env.LEGACY_CONFIG_FILE,

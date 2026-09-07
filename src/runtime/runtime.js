@@ -47,15 +47,23 @@ export async function waitForDataPath(health, {
         path: health.websocket.path,
         timeoutMs: Math.min(attemptTimeoutMs, Math.max(1, deadline - now())),
       });
-      await probe({
+      // Probe all published exits with separate authenticated SOCKS identities.
+      // Parallel attempts share the same deadline, so adding exits does not
+      // multiply the controller's bounded transaction or watchdog timeout.
+      const profiles = health.profiles ?? [{ username: health.username, password: health.password }];
+      if (!Array.isArray(profiles) || profiles.length < 1 || profiles.length > 16) {
+        throw new Error('invalid health profiles');
+      }
+      const results = await Promise.allSettled(profiles.map((profile) => probe({
         proxyHost: health.listenHost ?? '127.0.0.1',
         proxyPort: health.listenPort,
-        username: health.username,
-        password: health.password,
+        username: profile.username,
+        password: profile.password,
         targetHost: health.targetHost,
         targetPort: health.targetPort,
         timeoutMs: Math.min(attemptTimeoutMs, Math.max(1, deadline - now())),
-      });
+      })));
+      if (results.some((result) => result.status === 'rejected')) throw new Error('an exit is unavailable');
       return true;
     } catch (error) {
       lastError = error;

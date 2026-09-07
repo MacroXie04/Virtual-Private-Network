@@ -1,48 +1,20 @@
 import {
   HEALTH_PASSWORD_BYTES,
   HEALTH_USERNAME,
-  PUBLIC_VLESS_PORT,
-  SUBSCRIPTION_VIEW_SCHEMA_VERSION,
   VLESS_LISTEN_HOST,
   VLESS_LISTEN_PORT,
   validateState,
-  validateSubscriptionView,
 } from './state-schema.js';
+import { ValidationError, isPlainObject } from './validation.js';
 import {
-  ValidationError,
-  isPlainObject,
-  safeYamlScalar,
-} from './validation.js';
-
-export const TAILSCALE_ENDPOINT_TAG = 'ts-out';
-export const PUBLIC_INBOUND_TAG = 'vless-in';
-export const HEALTH_INBOUND_TAG = 'health-in';
-export const BOOTSTRAP_DNS_TAG = 'bootstrap-dns';
-export const EXIT_DNS_TAG = 'exit-dns';
-export const EXIT_DNS_SERVER = '1.1.1.1';
-export const BLOCKED_NON_INTERNET_CIDRS = Object.freeze([
-  '0.0.0.0/8',
-  '100.64.0.0/10',
-  '192.0.0.0/24',
-  '192.0.2.0/24',
-  '192.88.99.2/32',
-  '198.18.0.0/15',
-  '198.51.100.0/24',
-  '203.0.113.0/24',
-  '240.0.0.0/4',
-  '64:ff9b::/96',
-  '64:ff9b:1::/48',
-  '100::/64',
-  '100:0:0:1::/64',
-  '2001::/32',
-  '2001:2::/48',
-  '2001:10::/28',
-  '2001:db8::/32',
-  '2002::/16',
-  '3fff::/20',
-  '5f00::/16',
-  'fd7a:115c:a1e0::/48',
-]);
+  TAILSCALE_ENDPOINT_TAG,
+  PUBLIC_INBOUND_TAG,
+  HEALTH_INBOUND_TAG,
+  BOOTSTRAP_DNS_TAG,
+  EXIT_DNS_TAG,
+  EXIT_DNS_SERVER,
+  BLOCKED_NON_INTERNET_CIDRS,
+} from './server-config-model.js';
 
 function sameArray(value, expected) {
   return Array.isArray(value)
@@ -62,7 +34,7 @@ function requireExactKeys(value, keys, path) {
   }
 }
 
-export function assertFailClosedConfig(value, expectedState = null) {
+export function assertSingleExitConfig(value, expectedState = null) {
   if (!isPlainObject(value)) fail('config', 'must be an object');
   if (Object.hasOwn(value, 'outbounds')) {
     fail('config.outbounds', 'must not provide a fallback outbound');
@@ -230,223 +202,3 @@ export function assertFailClosedConfig(value, expectedState = null) {
   }
   return value;
 }
-
-export function renderSingBoxConfig(value) {
-  const state = validateState(value);
-  const activeUsers = state.users
-    .filter((user) => user.status === 'active')
-    .map((user) => ({
-      name: user.id,
-      uuid: user.uuid,
-    }));
-  const endpoint = {
-    type: 'tailscale',
-    tag: TAILSCALE_ENDPOINT_TAG,
-    state_directory: state.tailscale.stateDirectory,
-    hostname: state.tailscale.hostname,
-    exit_node: state.tailscale.exitNode,
-    ephemeral: false,
-    // Tailscale must resolve its coordination/DERP bootstrap hosts before the
-    // tunnel exists. This is the sole intentionally direct DNS transport.
-    domain_resolver: BOOTSTRAP_DNS_TAG,
-  };
-  if (state.tailscale.authKey !== null) endpoint.auth_key = state.tailscale.authKey;
-  const config = {
-    log: { level: 'info', timestamp: true },
-    dns: {
-      servers: [
-        { type: 'local', tag: BOOTSTRAP_DNS_TAG },
-        {
-          type: 'udp',
-          tag: EXIT_DNS_TAG,
-          server: EXIT_DNS_SERVER,
-          server_port: 53,
-          detour: TAILSCALE_ENDPOINT_TAG,
-        },
-      ],
-      final: EXIT_DNS_TAG,
-    },
-    inbounds: [
-      {
-        type: 'vless',
-        tag: PUBLIC_INBOUND_TAG,
-        listen: VLESS_LISTEN_HOST,
-        listen_port: VLESS_LISTEN_PORT,
-        users: activeUsers,
-        transport: {
-          type: 'ws',
-          path: state.gateway.websocketPath,
-        },
-      },
-      {
-        type: 'mixed',
-        tag: HEALTH_INBOUND_TAG,
-        listen: '127.0.0.1',
-        listen_port: state.health.listenPort,
-        users: [{
-          username: state.health.username,
-          password: state.health.password,
-        }],
-      },
-    ],
-    endpoints: [endpoint],
-    route: {
-      rules: [
-        {
-          inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG],
-          action: 'resolve',
-          server: EXIT_DNS_TAG,
-        },
-        {
-          inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG],
-          ip_is_private: true,
-          action: 'reject',
-        },
-        {
-          inbound: [PUBLIC_INBOUND_TAG, HEALTH_INBOUND_TAG],
-          ip_cidr: [...BLOCKED_NON_INTERNET_CIDRS],
-          action: 'reject',
-        },
-      ],
-      final: TAILSCALE_ENDPOINT_TAG,
-      default_domain_resolver: EXIT_DNS_TAG,
-    },
-  };
-  return assertFailClosedConfig(config, state);
-}
-
-export function buildSubscriptionView(value) {
-  const state = validateState(value);
-  return validateSubscriptionView({
-    schemaVersion: SUBSCRIPTION_VIEW_SCHEMA_VERSION,
-    revision: state.revision,
-    gateway: {
-      vpnPublicHostname: state.gateway.vpnPublicHostname,
-      subscriptionPublicHostname: new URL(state.gateway.subscriptionPublicBaseUrl).hostname,
-      port: PUBLIC_VLESS_PORT,
-      websocketPath: state.gateway.websocketPath,
-    },
-    users: state.users
-      .filter((user) => user.status === 'active')
-      .map((user) => ({
-        id: user.id,
-        displayName: user.displayName,
-        uuid: user.uuid,
-        tokenHash: user.tokenHash,
-      })),
-  });
-}
-
-function resolveConnection(value, selector) {
-  let source;
-  if (value?.schemaVersion === 3) {
-    const state = validateState(value);
-    source = buildSubscriptionView(state);
-  } else {
-    source = validateSubscriptionView(value);
-  }
-  const id = typeof selector === 'string' ? selector : selector?.id;
-  const user = source.users.find((candidate) => candidate.id === id);
-  if (!user) throw new ValidationError('user', 'must identify an active user');
-  return {
-    uuid: user.uuid,
-    name: user.displayName,
-    host: source.gateway.vpnPublicHostname,
-    port: source.gateway.port,
-    websocketPath: source.gateway.websocketPath,
-  };
-}
-
-export function renderVlessLink(value, selector) {
-  const config = resolveConnection(value, selector);
-  const query = new URLSearchParams({
-    encryption: 'none',
-    security: 'tls',
-    sni: config.host,
-    type: 'ws',
-    host: config.host,
-    path: config.websocketPath,
-  });
-  return `vless://${config.uuid}@${config.host}:${config.port}?${query}#${encodeURIComponent(config.name)}`;
-}
-
-export function renderSingBoxClientConfig(value, selector) {
-  const config = resolveConnection(value, selector);
-  return {
-    log: { level: 'info', timestamp: true },
-    inbounds: [{
-      type: 'mixed',
-      tag: 'mixed-in',
-      listen: '127.0.0.1',
-      listen_port: 7890,
-    }],
-    outbounds: [{
-      type: 'vless',
-      tag: 'proxy',
-      server: config.host,
-      server_port: config.port,
-      uuid: config.uuid,
-      tls: {
-        enabled: true,
-        server_name: config.host,
-      },
-      transport: {
-        type: 'ws',
-        path: config.websocketPath,
-        headers: { Host: config.host },
-      },
-    }],
-    route: { final: 'proxy' },
-  };
-}
-
-export function renderClashClientConfig(value, selector) {
-  const config = resolveConnection(value, selector);
-  const quote = safeYamlScalar;
-  return `mixed-port: 7890
-allow-lan: false
-mode: rule
-log-level: info
-proxies:
-  - name: ${quote(config.name)}
-    type: vless
-    server: ${quote(config.host)}
-    port: ${config.port}
-    uuid: ${quote(config.uuid)}
-    network: ws
-    udp: true
-    tls: true
-    servername: ${quote(config.host)}
-    ws-opts:
-      path: ${quote(config.websocketPath)}
-      headers:
-        Host: ${quote(config.host)}
-proxy-groups:
-  - name: PROXY
-    type: select
-    proxies:
-      - ${quote(config.name)}
-rules:
-  - MATCH,PROXY
-`;
-}
-
-export function renderMixedSubscription(value, selector) {
-  return Buffer.from(`${renderVlessLink(value, selector)}\n`, 'utf8').toString('base64');
-}
-
-export function renderClientSubscription(value, selector, format = 'links') {
-  if (format === 'links') return `${renderVlessLink(value, selector)}\n`;
-  if (format === 'mixed') return renderMixedSubscription(value, selector);
-  if (format === 'sing-box' || format === 'singbox') {
-    return `${JSON.stringify(renderSingBoxClientConfig(value, selector), null, 2)}\n`;
-  }
-  if (format === 'clash') return renderClashClientConfig(value, selector);
-  throw new ValidationError('format', 'must be links, mixed, sing-box, or clash');
-}
-
-export const renderSubscriptionView = buildSubscriptionView;
-export const buildVlessLink = renderVlessLink;
-export const buildSingBoxClientConfig = renderSingBoxClientConfig;
-export const buildClashClientConfig = renderClashClientConfig;
-export const buildMixedSubscription = renderMixedSubscription;

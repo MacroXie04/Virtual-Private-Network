@@ -1,4 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { exitProfileId } from '../core/exit-profiles.js';
+
+const CONTROLLER_ERROR_MESSAGES = new Map([
+  ['ENROLLMENT_KEY_REQUIRED', 'Configure a Tailscale enrollment key before adding an exit'],
+  ['ENROLLMENT_KEY_UNAVAILABLE', 'The Tailscale enrollment key is unavailable; check its configured secret file'],
+  ['EXIT_ALREADY_PUBLISHED', 'This exit is already the default exit or published in subscriptions'],
+  ['EXIT_LIMIT_REACHED', 'The limit of 15 additional exits has been reached; remove an exit before adding another'],
+  ['EXIT_DIRECTORY_REQUIRED', 'Configure the Tailscale API credential to load the exit-node directory'],
+  ['EXIT_DIRECTORY_UNAVAILABLE', 'The exit-node directory is unavailable; check the Tailscale API credential and network access'],
+]);
 
 /** Escape untrusted controller/state values for HTML text and attributes. */
 export function escapeHtml(value) {
@@ -126,6 +136,50 @@ ${mutationFields(snapshot)}
 </form>`;
 }
 
+function renderSelectableExits(snapshot) {
+  const exits = Array.isArray(snapshot.selectableExits) ? snapshot.selectableExits : [];
+  const published = exits.flatMap((exit) => {
+    if (typeof exit?.id !== 'string' || !/^[0-9a-f]{16}$/u.test(exit.id)) return [];
+    return [`<li>
+<p><strong>${escapeHtml(exit.name)}</strong> <code>${escapeHtml(exit.address)}</code></p>
+<form method="post" action="/exit-nodes/${exit.id}/remove">
+${mutationFields(snapshot)}
+<button type="submit">Remove from subscriptions</button>
+</form>
+</li>`];
+  }).join('\n');
+  const nodes = Array.isArray(snapshot.exitNodes) ? snapshot.exitNodes : [];
+  const defaultExit = snapshot.gateway?.exitNode;
+  const defaultId = defaultExit?.deviceId ?? snapshot.gateway?.exitNodeId;
+  const publishedIds = new Set(exits.map((exit) => exit?.id));
+  const occupiedValues = new Set([
+    defaultExit?.address,
+    defaultExit?.name,
+    ...exits.flatMap((exit) => [exit?.address, exit?.name]),
+  ].filter((value) => typeof value === 'string' && value.length > 0));
+  const options = nodes.flatMap((node) => {
+    const id = safeId(node?.deviceId ?? node?.id);
+    if (!id || id === defaultId || publishedIds.has(exitProfileId(id))
+      || [node?.address, node?.ipv4, node?.ipv6, node?.name, node?.hostname]
+        .some((value) => occupiedValues.has(value))) return [];
+    return [`<option value="${escapeHtml(id)}">${escapeHtml(node?.name ?? node?.hostname ?? id)}</option>`];
+  }).join('\n');
+  const disabled = snapshot.ready === false || exits.length >= 15 ? ' disabled' : '';
+  const addForm = snapshot.exitDirectoryAvailable === true && options !== ''
+    ? `<form method="post" action="/exit-nodes">
+${mutationFields(snapshot)}
+<label>Exit node <select name="deviceId" required${disabled}>${options}</select></label>
+<button type="submit"${disabled}>Add to subscriptions</button>
+</form>`
+    : snapshot.exitDirectoryAvailable === true
+      ? '<p>No additional exit nodes are available to add.</p>'
+      : '<p>Adding an exit requires an available validated Tailscale exit-node directory.</p>';
+  return `<p>All users can choose the default exit and these published exits in their VPN client after refreshing their subscription. Up to 15 additional exits can be published.</p>
+${published ? `<ul>${published}</ul>` : '<p>No additional exits are published.</p>'}
+${addForm}
+<p>Adding or removing an exit briefly restarts the gateway. Removing an exit disconnects its profiles; refresh subscriptions afterward.</p>`;
+}
+
 /** Render the authenticated, script-free administration page. */
 export function renderDashboardPage(snapshot = {}) {
   const users = Array.isArray(snapshot.users) ? snapshot.users : [];
@@ -140,7 +194,7 @@ export function renderDashboardPage(snapshot = {}) {
   const mutationDisabled = ready ? '' : ' disabled';
   const runtimeNotice = ready
     ? '<p role="status">The routed VPN data path is ready.</p>'
-    : '<p role="alert">The VPN data path is unavailable and public subscriptions are in maintenance mode. Select a working exit node below; other changes are disabled until routed readiness succeeds.</p>';
+    : '<p role="alert">The VPN data path is unavailable and public subscriptions are in maintenance mode. Select a working default exit or remove an unavailable published exit below; other changes are disabled until routed readiness succeeds.</p>';
   return document('VPN gateway administration', `
 <h1>VPN gateway administration</h1>
 ${runtimeNotice}
@@ -159,8 +213,12 @@ ${mutationFields(snapshot)}
 </form>
 </section>
 <section>
-<h2>Exit node</h2>
+<h2>Default exit node</h2>
 ${renderExitNodes(snapshot)}
+</section>
+<section>
+<h2>Client-selectable exits</h2>
+${renderSelectableExits(snapshot)}
 </section>
 <section>
 <h2>Create user</h2>
@@ -187,11 +245,12 @@ export function renderSecretPage(result = {}, { heading = 'Credentials created' 
 <p>Copy these values now. The raw subscription token is not persisted; only an exact retry of this request can recover it briefly.</p>
 ${result.rawToken ? `<h2>Raw subscription token</h2><pre>${escapeHtml(result.rawToken)}</pre>` : ''}
 ${result.vlessLink ? `<h2>VLESS link</h2><pre>${escapeHtml(result.vlessLink)}</pre>` : ''}
-${subscription ? `<h2>Subscription URL</h2><pre>${escapeHtml(subscription)}</pre>` : ''}
+${subscription ? `<h2>Subscription URL</h2><pre>${escapeHtml(subscription)}</pre><p>Import this subscription to choose among published exits. The single VLESS link uses the default exit.</p>` : ''}
 <p><a href="/">Return to administration</a></p>`);
 }
 
-export function renderErrorPage(status = 500) {
-  const message = status === 403 ? 'Request forbidden' : status === 409 ? 'State changed; reload and try again' : 'Request failed';
+export function renderErrorPage(status = 500, code = undefined) {
+  const message = CONTROLLER_ERROR_MESSAGES.get(code)
+    ?? (status === 403 ? 'Request forbidden' : status === 409 ? 'State changed; reload and try again' : 'Request failed');
   return document(message, `<h1>${escapeHtml(message)}</h1><p><a href="/">Return to administration</a></p>`);
 }

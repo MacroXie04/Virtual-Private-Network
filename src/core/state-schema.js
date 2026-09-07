@@ -1,4 +1,6 @@
 import { validateScryptRecord } from './credentials.js';
+import { MAX_EXTRA_EXITS, validateExitAddress, validateExitProfileId } from './exit-profiles.js';
+import { assertUniqueUsers, validateUser } from './user-records.js';
 import {
   ValidationError,
   classifyHost,
@@ -6,15 +8,11 @@ import {
   expectInteger,
   expectNullableString,
   expectString,
-  normalizeDisplayName,
   validateAbsoluteStatePath,
   validatePort,
   validatePublicDnsHostname,
   validatePublicIngressSettings,
   validateTimestamp,
-  validateTokenHash,
-  validateUuid,
-  validateWebSocketPath,
 } from './validation.js';
 
 export const STATE_SCHEMA_VERSION = 3;
@@ -27,12 +25,7 @@ export const HEALTH_PASSWORD_BYTES = 32;
 export const VLESS_LISTEN_HOST = '127.0.0.1';
 export const VLESS_LISTEN_PORT = 8443;
 export const PUBLIC_VLESS_PORT = 443;
-
-const USER_STATUSES = new Set(['active', 'disabled', 'revoked']);
-
-function nullableTimestamp(value, path) {
-  return value === null ? null : validateTimestamp(value, path);
-}
+export { MAX_EXTRA_EXITS } from './exit-profiles.js';
 
 function nullableSecret(value, path) {
   const secret = expectNullableString(value, path, { min: 8, max: 512 });
@@ -52,69 +45,6 @@ function normalizeConnectHost(value, path) {
   return classifyHost(value, path).value;
 }
 
-function validateUserId(value, path) {
-  const id = expectString(value, path, { min: 3, max: 64 });
-  if (!/^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/u.test(id)) {
-    throw new ValidationError(path, 'must contain only lowercase letters, digits, underscores, and hyphens');
-  }
-  return id;
-}
-
-function validateUser(value, path) {
-  const user = expectExactKeys(value, [
-    'id',
-    'displayName',
-    'uuid',
-    'tokenHash',
-    'status',
-    'createdAt',
-    'updatedAt',
-    'disabledAt',
-    'revokedAt',
-  ], path);
-  const status = expectString(user.status, `${path}.status`, { min: 6, max: 8 });
-  if (!USER_STATUSES.has(status)) {
-    throw new ValidationError(`${path}.status`, 'must be active, disabled, or revoked');
-  }
-  const createdAt = validateTimestamp(user.createdAt, `${path}.createdAt`);
-  const updatedAt = validateTimestamp(user.updatedAt, `${path}.updatedAt`);
-  const disabledAt = nullableTimestamp(user.disabledAt, `${path}.disabledAt`);
-  const revokedAt = nullableTimestamp(user.revokedAt, `${path}.revokedAt`);
-  if (updatedAt < createdAt) throw new ValidationError(`${path}.updatedAt`, 'must not precede createdAt');
-  if (disabledAt !== null && disabledAt < createdAt) {
-    throw new ValidationError(`${path}.disabledAt`, 'must not precede createdAt');
-  }
-  if (disabledAt !== null && disabledAt > updatedAt) {
-    throw new ValidationError(`${path}.disabledAt`, 'must not follow updatedAt');
-  }
-  if (revokedAt !== null && revokedAt < createdAt) {
-    throw new ValidationError(`${path}.revokedAt`, 'must not precede createdAt');
-  }
-  if (revokedAt !== null && revokedAt > updatedAt) {
-    throw new ValidationError(`${path}.revokedAt`, 'must not follow updatedAt');
-  }
-  if (status === 'active' && (disabledAt !== null || revokedAt !== null)) {
-    throw new ValidationError(path, 'active users cannot have disabledAt or revokedAt timestamps');
-  }
-  if (status === 'disabled' && (disabledAt === null || revokedAt !== null)) {
-    throw new ValidationError(path, 'disabled users require disabledAt and cannot have revokedAt');
-  }
-  if (status === 'revoked' && revokedAt === null) {
-    throw new ValidationError(path, 'revoked users require revokedAt');
-  }
-  return {
-    id: validateUserId(user.id, `${path}.id`),
-    displayName: normalizeDisplayName(user.displayName, `${path}.displayName`),
-    uuid: validateUuid(user.uuid, `${path}.uuid`),
-    tokenHash: validateTokenHash(user.tokenHash, `${path}.tokenHash`),
-    status,
-    createdAt,
-    updatedAt,
-    disabledAt,
-    revokedAt,
-  };
-}
-
 function validateGateway(value, path) {
   return validatePublicIngressSettings(value, path);
 }
@@ -126,14 +56,51 @@ function validateTailscale(value, path) {
     'authKey',
     'apiKey',
     'exitNode',
+    ...(Object.hasOwn(value ?? {}, 'extraExits') ? ['extraExits'] : []),
   ], path);
-  return {
+  const normalized = {
     hostname: normalizeDnsName(tailscale.hostname, `${path}.hostname`),
     stateDirectory: validateAbsoluteStatePath(tailscale.stateDirectory, `${path}.stateDirectory`),
     authKey: nullableSecret(tailscale.authKey, `${path}.authKey`),
     apiKey: nullableSecret(tailscale.apiKey, `${path}.apiKey`),
     exitNode: normalizeConnectHost(tailscale.exitNode, `${path}.exitNode`),
   };
+  if (Object.hasOwn(tailscale, 'extraExits')) {
+    normalized.extraExits = validateExtraExits(tailscale.extraExits, `${path}.extraExits`);
+  }
+  return normalized;
+}
+
+export function validateExtraExits(value, path, projected = false) {
+  if (!Array.isArray(value) || value.length > MAX_EXTRA_EXITS) {
+    throw new ValidationError(path, `must be an array of at most ${MAX_EXTRA_EXITS} extra exits`);
+  }
+  const ids = new Set();
+  const names = new Set();
+  const addresses = new Set();
+  return value.map((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    const exit = expectExactKeys(entry, projected
+      ? ['id', 'name']
+      : ['id', 'name', 'address', 'authKey'], entryPath);
+    const normalized = {
+      id: validateExitProfileId(exit.id, `${entryPath}.id`),
+      name: normalizeDnsName(exit.name, `${entryPath}.name`),
+    };
+    if (ids.has(normalized.id)) throw new ValidationError(`${entryPath}.id`, 'must be unique');
+    if (names.has(normalized.name)) throw new ValidationError(`${entryPath}.name`, 'must be unique');
+    ids.add(normalized.id);
+    names.add(normalized.name);
+    if (!projected) {
+      normalized.address = validateExitAddress(exit.address, `${entryPath}.address`);
+      normalized.authKey = nullableSecret(exit.authKey, `${entryPath}.authKey`);
+      if (addresses.has(normalized.address)) {
+        throw new ValidationError(`${entryPath}.address`, 'must be unique');
+      }
+      addresses.add(normalized.address);
+    }
+    return normalized;
+  });
 }
 
 function validateHealth(value, path) {
@@ -171,31 +138,6 @@ function validateHealth(value, path) {
 function validateAdmin(value, path) {
   const admin = expectExactKeys(value, ['scrypt'], path);
   return { scrypt: validateScryptRecord(admin.scrypt, `${path}.scrypt`) };
-}
-
-function assertUniqueUsers(users) {
-  const properties = [
-    ['id', (user) => user.id],
-    ['uuid', (user) => user.uuid],
-    ['tokenHash', (user) => user.tokenHash],
-  ];
-  for (const [name, getter] of properties) {
-    const seen = new Set();
-    users.forEach((user, index) => {
-      const value = getter(user);
-      if (seen.has(value)) throw new ValidationError(`state.users[${index}].${name}`, 'must be unique');
-      seen.add(value);
-    });
-  }
-  const activeNames = new Set();
-  users.forEach((user, index) => {
-    if (user.status === 'revoked') return;
-    const key = user.displayName.toLowerCase();
-    if (activeNames.has(key)) {
-      throw new ValidationError(`state.users[${index}].displayName`, 'must be unique among non-revoked users');
-    }
-    activeNames.add(key);
-  });
 }
 
 function validateStateWithOptions(value) {
@@ -280,68 +222,4 @@ export function parseStateJson(text) {
   return validateState(value);
 }
 
-function validateProjectedUser(value, path) {
-  const user = expectExactKeys(value, ['id', 'displayName', 'uuid', 'tokenHash'], path);
-  return {
-    id: validateUserId(user.id, `${path}.id`),
-    displayName: normalizeDisplayName(user.displayName, `${path}.displayName`),
-    uuid: validateUuid(user.uuid, `${path}.uuid`),
-    tokenHash: validateTokenHash(user.tokenHash, `${path}.tokenHash`),
-  };
-}
-
-export function validateSubscriptionView(value) {
-  const view = expectExactKeys(value, [
-    'schemaVersion',
-    'revision',
-    'gateway',
-    'users',
-  ], 'subscriptionView');
-  if (view.schemaVersion !== SUBSCRIPTION_VIEW_SCHEMA_VERSION) {
-    throw new ValidationError('subscriptionView.schemaVersion', `must be ${SUBSCRIPTION_VIEW_SCHEMA_VERSION}`);
-  }
-  const gateway = expectExactKeys(
-    view.gateway,
-    ['vpnPublicHostname', 'subscriptionPublicHostname', 'port', 'websocketPath'],
-    'subscriptionView.gateway',
-  );
-  if (!Array.isArray(view.users)) throw new ValidationError('subscriptionView.users', 'must be an array');
-  if (view.users.length > MAX_USERS) {
-    throw new ValidationError('subscriptionView.users', `must contain at most ${MAX_USERS} active users`);
-  }
-  const users = view.users.map((user, index) => validateProjectedUser(user, `subscriptionView.users[${index}]`));
-  assertUniqueUsers(users.map((user) => ({ ...user, status: 'active' })));
-  const normalizedGateway = {
-    vpnPublicHostname: validatePublicDnsHostname(
-      gateway.vpnPublicHostname,
-      'subscriptionView.gateway.vpnPublicHostname',
-    ),
-    subscriptionPublicHostname: validatePublicDnsHostname(
-      gateway.subscriptionPublicHostname,
-      'subscriptionView.gateway.subscriptionPublicHostname',
-    ),
-    port: (() => {
-      const port = validatePort(gateway.port, 'subscriptionView.gateway.port');
-      if (port !== PUBLIC_VLESS_PORT) {
-        throw new ValidationError('subscriptionView.gateway.port', `must be ${PUBLIC_VLESS_PORT}`);
-      }
-      return port;
-    })(),
-    websocketPath: validateWebSocketPath(
-      gateway.websocketPath,
-      'subscriptionView.gateway.websocketPath',
-    ),
-  };
-  if (normalizedGateway.vpnPublicHostname === normalizedGateway.subscriptionPublicHostname) {
-    throw new ValidationError('subscriptionView.gateway', 'VPN and subscription hostnames must be distinct');
-  }
-  return {
-    schemaVersion: SUBSCRIPTION_VIEW_SCHEMA_VERSION,
-    revision: expectInteger(view.revision, 'subscriptionView.revision', { min: 0 }),
-    gateway: normalizedGateway,
-    users,
-  };
-}
-
 export const parseState = validateState;
-export const parseSubscriptionView = validateSubscriptionView;
