@@ -12,3 +12,11 @@ deploy/docker/*
 !deploy/docker/entrypoint.sh
 !deploy/docker/cloudflared.Dockerfile
 !deploy/docker/cloudflared-guard.go
+!deploy/docker/sing-box/
+deploy/docker/sing-box/*
+!deploy/docker/sing-box/go.mod
+!deploy/docker/sing-box/go.sum
+!deploy/docker/cloudflared/
+deploy/docker/cloudflared/*
+!deploy/docker/cloudflared/go.mod
+!deploy/docker/cloudflared/go.sum

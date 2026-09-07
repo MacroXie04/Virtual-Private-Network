@@ -305,6 +305,8 @@ test('container pins supported runtimes and Compose exposes origins only through
     composeLauncher,
     dockerignore,
     exampleEnvironment,
+    singBoxModule,
+    cloudflaredModule,
   ] = await Promise.all([
     readProjectFile('deploy/docker/Dockerfile'),
     readProjectFile('docker-compose.yml'),
@@ -314,10 +316,17 @@ test('container pins supported runtimes and Compose exposes origins only through
     readProjectFile('deploy/docker/compose-up.sh'),
     readProjectFile('.dockerignore'),
     readProjectFile('.env.example'),
+    readProjectFile('deploy/docker/sing-box/go.mod'),
+    readProjectFile('deploy/docker/cloudflared/go.mod'),
   ]);
 
   assert.match(dockerfile, /FROM node:24\.20\.0-alpine3\.24@sha256:[0-9a-f]{64}/u);
-  assert.match(dockerfile, /github\.com\/sagernet\/sing-box\/cmd\/sing-box@v1\.13\.21/u);
+  assert.match(singBoxModule, /^\s*github\.com\/sagernet\/sing-box v1\.13\.21$/mu);
+  assert.match(dockerfile, /go build -mod=readonly/u);
+  assert.match(dockerfile, /github\.com\/sagernet\/sing-box\/cmd\/sing-box/u);
+  assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
+  assert.match(dockerfile, /ADD --checksum=sha256:9f58bff01604cb1b14008fef14dceb14d836a49225e45c6c2e37de3be3e707f0/u);
+  assert.match(dockerfile, /npm install --global --offline --ignore-scripts/u);
   assert.match(dockerfile, /with_tailscale/u);
   assert.doesNotMatch(dockerfile, /^EXPOSE\b/mu);
   assert.doesNotMatch(compose, /^\s+ports:\s*$/mu);
@@ -340,8 +349,12 @@ test('container pins supported runtimes and Compose exposes origins only through
   assert.doesNotMatch(compose, /(?:^|\s)(?:TUNNEL_TOKEN|--token)(?:\s|:|=)/u);
   assert.match(
     tunnelDockerfile,
-    /FROM cloudflare\/cloudflared:2026\.8\.3@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339/u,
+    /FROM gcr\.io\/distroless\/base-debian13:nonroot@sha256:d199d20fb09c898d8822ae5cbd5cf3c6d424e9b5e1fc2eb9a719a7752cd9d861/u,
   );
+  assert.match(tunnelDockerfile, /ADD --checksum=sha256:908aab97646925b8df7cd832c3aed96113cff070d3b41f665ffa55a86f1b04b5/u);
+  assert.match(tunnelDockerfile, /go build -mod=readonly/u);
+  assert.match(tunnelDockerfile, /-X main\.Version=2026\.8\.3/u);
+  assert.match(cloudflaredModule, /^module github\.com\/cloudflare\/cloudflared$/mu);
   assert.match(tunnelDockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/cloudflared-guard"\]/u);
   assert.match(tunnelGuard, /tokenFD\s+= 9/u);
   assert.match(tunnelGuard, /syscall\.O_NOFOLLOW/u);
