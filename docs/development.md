@@ -66,3 +66,15 @@ Run the full suite on supported Node 24. Linux ownership and service/deployment 
 When changing deployment layout, verify a fresh installation, an upgrade from the retired flat layout, and failed-upgrade restoration of the prior source tree and service units. The installer must remove only the enumerated retired flat source files inside its existing backup and rollback transaction. Check that both supervised HTTP entry files exist and retain the application-root working directory.
 
 Keep the image-to-source comparison recursive as source directories grow. Update active path references in Compose, build contexts, workflows, and dependency-update configuration without changing historical secret-scanning exceptions. Configuration checks and synthetic tests complement the [live production verification](operations.md#verification); they do not replace it.
+
+## Container dependency maintenance
+
+The [gateway Dockerfile](../deploy/docker/Dockerfile) and [cloudflared Dockerfile](../deploy/docker/cloudflared.Dockerfile) rebuild the pinned application releases with security updates to their Go dependencies. Build-only manifests in [sing-box/go.mod](../deploy/docker/sing-box/go.mod) and [cloudflared/go.mod](../deploy/docker/cloudflared/go.mod), together with their adjacent `go.sum` files, lock those dependencies. Builds use the pinned Go toolchain, prevent implicit manifest updates with `-mod=readonly`, and verify module checksums.
+
+Cloudflared's Dockerfile pins the upstream source commit and archive checksum. Refresh its manifests against that exact source checkout and preserve the upstream `replace` directives, including its QUIC fork, along with the container build settings. Keep the released application version and required sing-box build tags unless an application upgrade is intended. The gateway runtime separately pins the Node base image digest, verifies the npm archive checksum before an offline update, and applies exact OpenSSL package fixes. Keep those pins and version checks together; the Dockerfiles are the source of truth for their values.
+
+For a dependency update:
+
+1. Identify the affected package from the image scan, update its manifest and checksum pair or runtime pin, and retain the existing security checks and upstream replacement rules.
+2. Rebuild both amd64 images using the Dockerfiles above. Run the source tests, image/runtime checks, and full Trivy image scans from the [CI workflow](../.github/workflows/ci.yml), covering operating-system and language packages with the existing severity, fix-availability, and secret-scanning settings.
+3. Dispatch `CI` with `workflow_dispatch` against the working branch and verify the completed run's commit matches the proposed change. The vulnerability gate currently runs for pushes to `main`, scheduled runs, and manual dispatches; pull-request checks alone do not run that gate. Resolve every blocking finding before merging.

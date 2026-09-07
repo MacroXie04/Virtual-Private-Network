@@ -1,22 +1,34 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-# Build the required embedded Tailscale outbound into the pinned sing-box
-# release, then copy only the static binary into the runtime image.
+# Keep the sing-box release and build tags stable while locking security fixes
+# for its transitive dependencies in a separate build module.
 FROM golang:1.26.7-alpine3.24@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS sing-box-build
 
 ENV GOPROXY=https://proxy.golang.org \
-    GOSUMDB=sum.golang.org
+    GOSUMDB=sum.golang.org \
+    GOTOOLCHAIN=local
+WORKDIR /build
+COPY deploy/docker/sing-box/go.mod deploy/docker/sing-box/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go install \
+    CGO_ENABLED=0 go build -mod=readonly \
       -trimpath \
       -tags "with_gvisor,with_utls,with_tailscale" \
       -ldflags "-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version=1.13.21 -X internal/godebug.defaultGODEBUG=multipathtcp=0" \
-      github.com/sagernet/sing-box/cmd/sing-box@v1.13.21
-RUN /go/bin/sing-box version | grep -Fx "sing-box version 1.13.21" \
-    && /go/bin/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale"
+      -o /out/sing-box github.com/sagernet/sing-box/cmd/sing-box \
+    && go mod verify
+RUN /out/sing-box version | grep -Fx "sing-box version 1.13.21" \
+    && /out/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale"
 
 FROM node:24.20.0-alpine3.24@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+
+ADD --checksum=sha256:9f58bff01604cb1b14008fef14dceb14d836a49225e45c6c2e37de3be3e707f0 \
+  https://registry.npmjs.org/npm/-/npm-11.19.1.tgz /tmp/npm-11.19.1.tgz
+RUN apk add --no-cache --upgrade libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
+    && npm install --global --offline --ignore-scripts --no-audit --no-fund \
+      --update-notifier=false --cache /tmp/npm-cache /tmp/npm-11.19.1.tgz \
+    && test "$(npm --version)" = 11.19.1 \
+    && rm -rf /tmp/npm-cache /tmp/npm-11.19.1.tgz
 
 RUN addgroup -S -g 11000 vpn-runtime \
     && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11000 -G vpn-runtime vpn-runtime \
@@ -26,7 +38,7 @@ RUN addgroup -S -g 11000 vpn-runtime \
     && adduser -S -D -H -h /nonexistent -s /sbin/nologin -u 11002 -G vpn-admin vpn-admin \
     && test -x /usr/bin/flock
 
-COPY --from=sing-box-build /go/bin/sing-box /usr/local/bin/sing-box
+COPY --from=sing-box-build /out/sing-box /usr/local/bin/sing-box
 
 WORKDIR /app
 COPY --chown=root:root --chmod=0644 package.json ./package.json
