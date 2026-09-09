@@ -42,6 +42,29 @@ assert_identity vpn-runtime "${SINGBOX_UID:-11000}" "${SINGBOX_GID:-11000}"
 assert_identity vpn-sub "${SUB_UID:-11001}" "${SUB_GID:-11001}"
 assert_identity vpn-admin "${ADMIN_UID:-11002}" "${ADMIN_GID:-11002}"
 
+# Check supported data before creating a lock or normalizing any ownership.
+# Refuse old formats while retaining recovery from an authoritative current revision.
+node --input-type=module --eval '
+  import { assertSupportedDataDirectory, assertNoUnpointedRevision } from "/app/src/state/bootstrap/recovery.js";
+  import { RevisionRepository } from "/app/src/state/repository.js";
+  await assertSupportedDataDirectory("/data");
+  const repository = new RevisionRepository("/data", {
+    runtimeGid: Number(process.env.SINGBOX_GID || 11000),
+    subscriptionGid: Number(process.env.SUB_GID || 11001),
+  });
+  const current = await repository.readCurrent();
+  const runtimeId = await repository.readPointer("runtime");
+  if (current && runtimeId !== null && runtimeId !== current.id) {
+    await repository.assertSupportedRevisionSchema(runtimeId);
+  } else if (!current) {
+    const runtime = await repository.readRuntime();
+    if (runtime === null) await assertNoUnpointedRevision("/data");
+    if (runtime?.manifest.operation === "ingress.migrate") {
+      throw new Error("Uncommitted conversion data is unsupported; use a new data directory.");
+    }
+  }
+'
+
 # The named volume can be attached to more than one container, while /run is
 # private to each container. Secure the volume root, create a non-replaceable
 # lock inode, and hold its advisory lock on fd 9 across the final exec. This is
@@ -98,28 +121,10 @@ assert_private_secret() {
   fi
 }
 
-# Bootstrap reads credentials only for a genuinely fresh volume. Existing v2
-# pointers are self-contained, and a v1 volume carries its credential in the
-# legacy configuration. This permits initialized containers to restart after
-# the one-time host auth-key file has been removed.
+# Initialized revisions preserve their own enrollment state, so restarts do not
+# require the one-time host auth-key file after it has been removed.
 bootstrap_credentials_required=yes
-v2_state_present=no
-legacy_state_present=no
 for state_marker in "$DATA_ROOT/current" "$DATA_ROOT/runtime"; do
-  if [ -e "$state_marker" ] || [ -L "$state_marker" ]; then
-    v2_state_present=yes
-  fi
-done
-for state_marker in "$DATA_ROOT/env" "$DATA_ROOT/config.json"; do
-  if [ -e "$state_marker" ] || [ -L "$state_marker" ]; then
-    legacy_state_present=yes
-  fi
-done
-for state_marker in \
-  "$DATA_ROOT/current" \
-  "$DATA_ROOT/runtime" \
-  "$DATA_ROOT/env" \
-  "$DATA_ROOT/config.json"; do
   if [ -e "$state_marker" ] || [ -L "$state_marker" ]; then
     bootstrap_credentials_required=no
     break
@@ -137,7 +142,6 @@ if [ -d "$DATA_ROOT/revisions" ] && [ ! -L "$DATA_ROOT/revisions" ]; then
     if [ "${#canonical_revision_name}" -eq 33 ] \
         && printf '%s\n' "$canonical_revision_name" \
         | grep -Eq '^[0-9]{16}-[0-9a-f]{16}$'; then
-      v2_state_present=yes
       bootstrap_credentials_required=no
       break
     fi
@@ -183,46 +187,16 @@ fi
 chown root:root "$DATA_ROOT/revisions"
 chmod 0751 "$DATA_ROOT/revisions"
 
-# Version 1 ran as root, including its persistent tsnet identity. Before the
-# first migration bootstrap, reject unsafe entries and hand that whole tree to
-# the dedicated runtime identity. Once v2 pointers exist, this recursive step
-# is never repeated.
-chown -h root:root "$DATA_ROOT/tailscale"
-chmod 0700 "$DATA_ROOT/tailscale"
+# Persistent identities belong only to the runtime user. Refuse unsafe entries
+# before changing the directory mode; existing files never receive recursive
+# ownership rewrites from the entrypoint.
 unsafe_state_entry="$(find "$DATA_ROOT/tailscale" -xdev \
   \( ! -type d ! -type f -o -type f -links +1 \) -print -quit)"
 if [ -n "$unsafe_state_entry" ]; then
   echo "The Tailscale state contains an unsafe symlink, special file, or hard link: $unsafe_state_entry" >&2
   exit 1
 fi
-if [ "$legacy_state_present" = yes ] && [ "$v2_state_present" = no ]; then
-  legacy_state_directory="$(
-    env -i \
-      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-      LEGACY_ENV_FILE="$DATA_ROOT/env" \
-      LEGACY_CONFIG_FILE="$DATA_ROOT/config.json" \
-      node --input-type=module --eval '
-        import { inspectLegacyV1 } from "/app/src/migrations/migrate-v1.js";
-        const inspection = await inspectLegacyV1({
-          envPath: process.env.LEGACY_ENV_FILE,
-          configPath: process.env.LEGACY_CONFIG_FILE,
-        });
-        process.stdout.write(inspection.legacyConfig.stateDirectory);
-      '
-  )"
-  if [ "$legacy_state_directory" != "$DATA_ROOT/tailscale" ]; then
-    echo "Docker legacy migration requires state_directory=$DATA_ROOT/tailscale; found $legacy_state_directory." >&2
-    exit 1
-  fi
-  if [ -z "$(find "$DATA_ROOT/tailscale" -xdev -mindepth 1 -print -quit)" ]; then
-    echo "Docker legacy migration requires a non-empty $DATA_ROOT/tailscale tree so it cannot silently enroll a replacement Tailnet identity." >&2
-    exit 1
-  fi
-  echo "Handing the validated legacy Tailscale state to vpn-runtime."
-  find "$DATA_ROOT/tailscale" -xdev -exec chown -h vpn-runtime:vpn-runtime {} +
-else
-  chown -h vpn-runtime:vpn-runtime "$DATA_ROOT/tailscale"
-fi
+chown -h vpn-runtime:vpn-runtime "$DATA_ROOT/tailscale"
 chmod 0700 "$DATA_ROOT/tailscale"
 chown root:vpn-admin "$SOCKET_ROOT"
 chmod 0750 "$SOCKET_ROOT"

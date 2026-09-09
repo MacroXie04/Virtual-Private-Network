@@ -6,13 +6,14 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { assertInstallerMatches, assertInstallerExcludes, installerPosition, installerModuleNames } from '../fixtures/installer.js';
+
 const execFile = promisify(execFileCallback);
 const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const readProjectFile = (relativePath) => readFile(path.join(projectRoot, relativePath), 'utf8');
 
 test('bare Cloudflare deployment is pinned, credential-backed, and loopback-only', async () => {
-  const [installer, target, tunnel, controller, singBox, subscription, admin] = await Promise.all([
-    readProjectFile('deploy/systemd/install.sh'),
+  const [target, tunnel, controller, singBox, subscription, admin] = await Promise.all([
     readProjectFile('deploy/systemd/vpn-gateway.target'),
     readProjectFile('deploy/systemd/vpn-gateway-tunnel.service'),
     readProjectFile('deploy/systemd/vpn-gateway-controller.service'),
@@ -21,62 +22,34 @@ test('bare Cloudflare deployment is pinned, credential-backed, and loopback-only
     readProjectFile('deploy/systemd/vpn-gateway-admin.service'),
   ]);
 
-  assert.match(installer, /readonly REQUIRED_CLOUDFLARED_VERSION=2026\.8\.3/u);
-  assert.match(installer, /readonly MIN_SYSTEMD_VERSION=247/u);
-  assert.match(installer, /CLOUDFLARED_BIN.*== \/usr\/bin\/cloudflared/u);
-  assert.match(installer, /cloudflared exactly \$REQUIRED_CLOUDFLARED_VERSION is required/u);
-  assert.match(installer, /ensure_group vpn-tunnel 11003/u);
-  assert.match(installer, /ensure_user vpn-tunnel 11003 11003/u);
-  assert.match(installer, /validate_service_namespace vpn-tunnel/u);
-  assert.match(installer, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/u);
-  assert.match(installer, /!\[0o400, 0o600\]\.includes\(mode\)/u);
-  assert.match(installer, /decoded token has an unsupported shape/u);
-  assert.match(installer, /write_environment_value ADMIN_PUBLIC_HOSTNAME "\$ADMIN_PUBLIC_HOSTNAME"/u);
-  assert.doesNotMatch(installer, /ADMIN_ALLOWED_HOSTS|ADMIN_ALLOWED_ORIGINS/u);
-  assert.match(installer, /UPGRADE_HAD_UNIT_TUNNEL/u);
-  assert.match(installer, /if path_is_present "\$metadata_root\/unit-tunnel"/u);
-  assert.match(installer, /MIGRATE_REALITY must be exactly 1/u);
-  assert.match(installer, /MIGRATE_LEGACY must be exactly 1/u);
-  assert.match(installer, /"MIGRATION_MARKER_DIR=\$MIGRATION_MARKER"/u);
-  assert.match(installer, /"TS_API_KEY_FILE=\$MIGRATION_API_KEY_FILE"/u);
-  assert.match(installer, /run_legacy_bootstrap 1 migrated,recovered/u);
-  assert.match(
-    installer,
-    /if \[\[ "\$LEGACY_SOURCE_STATE" == "\$STATE_ROOT\/tailscale" \]\]; then\s+die "The legacy Tailscale state directory already equals the migration destination/u,
-  );
-  const inPlaceStateReject = installer.indexOf(
-    'The legacy Tailscale state directory already equals the migration destination',
-  );
-  const legacyApproval = installer.indexOf('case "${MIGRATE_LEGACY:-}" in');
-  const legacyStateCopy = installer.indexOf('cp -a -- "$LEGACY_SOURCE_STATE/."');
+  assertInstallerMatches(/readonly REQUIRED_CLOUDFLARED_VERSION=2026\.8\.3/u);
+  assertInstallerMatches(/readonly MIN_SYSTEMD_VERSION=247/u);
+  assertInstallerMatches(/CLOUDFLARED_BIN.*== \/usr\/bin\/cloudflared/u);
+  assertInstallerMatches(/cloudflared exactly \$REQUIRED_CLOUDFLARED_VERSION is required/u);
+  assertInstallerMatches(/ensure_group vpn-tunnel 11003/u);
+  assertInstallerMatches(/ensure_user vpn-tunnel 11003 11003/u);
+  assertInstallerMatches(/validate_service_namespace vpn-tunnel/u);
+  assertInstallerMatches(/constants\.O_RDONLY \| constants\.O_NOFOLLOW/u);
+  assertInstallerMatches(/!\[0o400, 0o600\]\.includes\(mode\)/u);
+  assertInstallerMatches(/decoded token has an unsupported shape/u);
+  assertInstallerMatches(/write_environment_value ADMIN_PUBLIC_HOSTNAME "\$ADMIN_PUBLIC_HOSTNAME"/u);
+  assertInstallerExcludes(/ADMIN_ALLOWED_HOSTS|ADMIN_ALLOWED_ORIGINS/u);
+  assertInstallerMatches(/UPGRADE_HAD_UNIT_TUNNEL/u);
+  assertInstallerMatches(/if path_is_present "\$metadata_root\/unit-tunnel"/u);
+  assertInstallerExcludes(/MIGRATE_|MIGRATION_|run_legacy_bootstrap|assertLegacyV1MigrationLineage/u);
+  assertInstallerMatches(/reject_retired_deployment/u);
+  assertInstallerMatches(/await assertSupportedDataDirectory/u);
+  assertInstallerMatches(/runtimeGid: 11000/u);
+  assertInstallerMatches(/subscriptionGid: Number\(process\.env\.SUBSCRIPTION_GID\)/u);
+  assertInstallerExcludes(/systemctl (?:stop|disable(?: --now)?) (?:vpn-sub|sing-box)\.service/u);
   assert.ok(
-    inPlaceStateReject > 0
-      && legacyApproval > inPlaceStateReject
-      && legacyStateCopy > legacyApproval,
-    'an in-place legacy identity must be rejected before approval or state-copy mutations',
+    installerPosition('reject_retired_deployment\n') < installerPosition('ensure_group vpn-runtime 11000'),
+    'unsupported existing deployments are rejected before service identity creation',
   );
-  assert.match(installer, /await assertLegacyV1MigrationLineage\(\{/u);
-  const lineageCheck = installer.indexOf('await assertLegacyV1MigrationLineage({');
-  const statePublishedMarker = installer.indexOf(
-    'install -o root -g root -m 0600 /dev/null "$MIGRATION_MARKER/state-published"',
-    lineageCheck,
-  );
-  assert.ok(
-    lineageCheck > 0 && statePublishedMarker > lineageCheck,
-    'v1 migration lineage must be authenticated and persisted before services may scrub its credentials',
-  );
-  const migrationStart = installer.indexOf('Starting the migration candidate with boot enablement held until commit');
-  const migrationCommit = installer.indexOf('mv -- "$MIGRATION_MARKER/committed" "$MIGRATION_COMMITTED_MARKER"');
-  const migrationEnable = installer.indexOf('systemctl enable vpn-gateway.target', migrationCommit);
-  assert.ok(
-    migrationStart > 0 && migrationCommit > migrationStart && migrationEnable > migrationCommit,
-    'legacy migration must remain boot-disabled until its durable commit is published',
-  );
-  assert.match(installer, /stop_unit_if_active_strict vpn-gateway-tunnel\.service yes\s+hold_migration_target_disabled/u);
-  assert.match(installer, /TCP 443 is listening on the origin host/u);
-  assert.match(installer, /for \(const port of \[8443, 8080, 8081, 20241\]\)/u);
-  assert.match(installer, /ordinary HTTP request on the canonical WebSocket path was not rejected/u);
-  assert.match(installer, /tunnel --metrics 127\.0\.0\.1:20241 ready/u);
+  assertInstallerMatches(/TCP 443 is listening on the origin host/u);
+  assertInstallerMatches(/for \(const port of \[8443, 8080, 8081, 20241\]\)/u);
+  assertInstallerMatches(/ordinary HTTP request on the canonical WebSocket path was not rejected/u);
+  assertInstallerMatches(/tunnel --metrics 127\.0\.0\.1:20241 ready/u);
 
   assert.match(target, /^Requires=.*vpn-gateway-tunnel\.service$/mu);
   assert.match(target, /^WantedBy=multi-user\.target$/mu);
@@ -110,11 +83,13 @@ test('bare Cloudflare deployment is pinned, credential-backed, and loopback-only
   assert.match(singBox, /^AmbientCapabilities=$/mu);
 });
 
-test('bare installer keeps valid shell syntax', async () => {
-  await execFile('bash', ['-n', path.join(projectRoot, 'deploy/systemd/install.sh')], {
-    timeout: 10_000,
-    maxBuffer: 64 * 1024,
-  });
+test('bare installer and every loaded module keep valid shell syntax', async () => {
+  await Promise.all(['install.sh', ...installerModuleNames.map((name) => `installer/${name}`)].map((script) => (
+    execFile('bash', ['-n', path.join(projectRoot, 'deploy/systemd', script)], {
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    })
+  )));
 });
 
 test('deployment guide links the required official Cloudflare guidance', async () => {

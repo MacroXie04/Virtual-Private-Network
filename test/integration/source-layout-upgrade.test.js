@@ -7,23 +7,17 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { installerEntry, installerFunction, installerModule } from '../fixtures/installer.js';
+
 const execFile = promisify(execFileCallback);
 const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
-const installer = await readFile(new URL('../../deploy/systemd/install.sh', import.meta.url), 'utf8');
+const installer = installerEntry;
 const nativeOwnership = process.platform === 'linux' && process.getuid?.() === 0;
 
-function installerFunction(name) {
-  const start = installer.indexOf(`\n${name}() {\n`);
-  assert.notEqual(start, -1, `installer function ${name} exists`);
-  const end = installer.indexOf('\n}\n', start);
-  assert.notEqual(end, -1, `installer function ${name} is complete`);
-  return installer.slice(start + 1, end + 2);
-}
-
-const sourceStart = installer.indexOf('\nvalidate_fixed_directory "$INSTALL_ROOT/src"\ninstall -o root');
-const sourceEnd = installer.indexOf('\n\nwrite_environment_value() {', sourceStart);
-assert.ok(sourceStart > 0 && sourceEnd > sourceStart);
-const sourceInstallation = installer.slice(sourceStart, sourceEnd);
+const sourceModule = installerModule('source-installation');
+const sourceStart = sourceModule.indexOf('\nvalidate_fixed_directory "$INSTALL_ROOT/src"\ninstall -o root');
+assert.ok(sourceStart > 0);
+const sourceInstallation = sourceModule.slice(sourceStart);
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'vpn-source-layout-')));
@@ -115,9 +109,103 @@ async function treeSnapshot(root) {
 }
 
 async function oldSourceFiles() {
-  return (await readdir(path.join(projectRoot, 'src'), { recursive: true }))
-    .filter((filename) => filename.endsWith('.js'))
-    .map((filename) => path.basename(filename));
+  // This is the historical flat checkout, not a flattening of today's source.
+  // New nested modules never existed at the retired top-level paths.
+  return [
+    'admin-page.js', 'admin-server.js', 'bootstrap.js', 'control-client.js',
+    'controller-server.js', 'controller-sessions.js', 'controller.js', 'credentials.js',
+    'health-probe.js', 'healthcheck.js', 'http-common.js', 'legacy-reality.js',
+    'legacy-v2.js', 'lifecycle.js', 'migrate-v1.js', 'render.js', 'repository.js',
+    'runtime.js', 'state-schema.js', 'subscription-server.js', 'tailscale.js',
+    'validation.js', 'websocket-probe.js',
+  ];
+}
+
+const retiredNestedFiles = [
+  'core/render.js',
+  'http/http-common.js',
+  'control/ingress-recovery.js',
+  'state/bootstrap-ingress-migration.js',
+  'migrations/legacy-v2.js',
+  'migrations/legacy-reality.js',
+  'migrations/legacy-v1-parse.js',
+  'migrations/legacy-v1-source.js',
+  'migrations/legacy-v1-state.js',
+  'migrations/legacy-v2-policy.js',
+  'migrations/legacy-v2-state.js',
+  'migrations/migrate-v1.js',
+  'migrations/migration-backup.js',
+  'migrations/migration-errors.js',
+  'migrations/migration-lineage-record.js',
+  'migrations/migration-lineage.js',
+  'migrations/migration-marker.js',
+  'migrations/migration-recovery.js',
+  'control/application.js',
+  'control/control-client.js',
+  'control/control-socket.js',
+  'control/controller-sessions.js',
+  'control/controller.js',
+  'control/operational-files.js',
+  'control/operations/gateway.js',
+  'control/operations/mutations.js',
+  'control/operations/users.js',
+  'control/process-settings.js',
+  'control/request-contract.js',
+  'control/request-dispatch.js',
+  'control/runtime-transactions.js',
+  'control/socket-files.js',
+  'control/socket-protocol.js',
+  'control/state-views.js',
+  'control/web-processes.js',
+  'core/client-subscriptions.js',
+  'core/credentials.js',
+  'core/exit-profiles.js',
+  'core/lifecycle.js',
+  'core/server-config-assert.js',
+  'core/server-config-model.js',
+  'core/server-render.js',
+  'core/single-exit-config-assert.js',
+  'core/state-schema.js',
+  'core/subscription-view.js',
+  'core/user-records.js',
+  'core/validation.js',
+  'http/admin-application.js',
+  'http/admin-auth.js',
+  'http/admin-page.js',
+  'http/admin-request.js',
+  'http/admin-routes.js',
+  'http/http-service.js',
+  'http/rate-limit.js',
+  'http/request-input.js',
+  'http/subscription-application.js',
+  'http/subscription-data.js',
+  'runtime/health-probe.js',
+  'runtime/runtime.js',
+  'runtime/websocket-probe.js',
+  'state/bootstrap-candidate.js',
+  'state/bootstrap-credentials.js',
+  'state/bootstrap-environment.js',
+  'state/bootstrap-errors.js',
+  'state/bootstrap-existing.js',
+  'state/bootstrap-files.js',
+  'state/bootstrap-initialize.js',
+  'state/bootstrap-recovery.js',
+  'state/bootstrap-service.js',
+  'state/repository-files.js',
+  'state/repository-pointers.js',
+  'state/repository-policy.js',
+  'state/revision-content.js',
+  'state/revision-directory.js',
+  'state/revision-manifest.js',
+  'state/revision-retention.js',
+];
+
+async function writeSourceFiles(root, filenames, content) {
+  for (const filename of filenames) {
+    const absolute = path.join(root, 'installed/src', filename);
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, content);
+  }
 }
 
 test('fresh source installation copies nested modules with the package and executable wrapper', async (t) => {
@@ -136,63 +224,104 @@ test('fresh source installation copies nested modules with the package and execu
       assert.deepEqual([metadata.uid, metadata.gid], [0, 0], `${relative || 'src/'} stays root-owned`);
     }
   }
-  await execFile(process.execPath, ['--input-type=module', '--eval', 'await import("./src/core/render.js")'], {
+  await execFile(process.execPath, ['--input-type=module', '--eval', 'await import("./src/core/server/render.js")'], {
     cwd: path.join(root, 'installed'),
     timeout: 10_000,
   });
 });
 
-test('source upgrade removes every retired flat module and preserves unrelated files and state', async (t) => {
-  const root = await fixture(t);
-  const retired = await oldSourceFiles();
-  await Promise.all(retired.map((filename) => writeFile(path.join(root, 'installed/src', filename), 'old source\n')));
-  await writeFile(path.join(root, 'installed/src/operator-hook.js'), '// operator extension\n');
-  await writeFile(path.join(root, 'environment/credentials.env'), 'keep existing credentials\n');
-  await runInstaller(root, sourceInstallation);
-  for (const filename of retired) {
-    await assert.rejects(lstat(path.join(root, 'installed/src', filename)), { code: 'ENOENT' });
-  }
-  assert.equal(await readFile(path.join(root, 'installed/src/operator-hook.js'), 'utf8'), '// operator extension\n');
-  assert.equal(await readFile(path.join(root, 'environment/credentials.env'), 'utf8'), 'keep existing credentials\n');
-  await runInstaller(root, sourceInstallation);
-  assert.equal(await readFile(path.join(root, 'installed/src/operator-hook.js'), 'utf8'), '// operator extension\n');
-});
+for (const layout of ['flat', 'nested']) {
+  test(`source upgrade removes every retired ${layout} module and preserves unrelated files and state`, async (t) => {
+    const root = await fixture(t);
+    const retired = layout === 'flat' ? await oldSourceFiles() : retiredNestedFiles;
+    const preserved = ['operator-hook.js', 'exit-profiles.js', 'core/operator-hook.js', 'http/operator-hook.js', 'migrations/operator-hook.js'];
+    await writeSourceFiles(root, retired, 'old source\n');
+    await writeSourceFiles(root, preserved, '// operator extension\n');
+    await writeFile(path.join(root, 'environment/credentials.env'), 'keep existing credentials\n');
+    await runInstaller(root, sourceInstallation);
+    for (const filename of retired) {
+      await assert.rejects(lstat(path.join(root, 'installed/src', filename)), { code: 'ENOENT' });
+    }
+    const firstInstall = await treeSnapshot(path.join(root, 'installed'));
+    await runInstaller(root, sourceInstallation);
+    assert.deepEqual(await treeSnapshot(path.join(root, 'installed')), firstInstall);
+    for (const filename of preserved) {
+      assert.equal(await readFile(path.join(root, 'installed/src', filename), 'utf8'), '// operator extension\n');
+    }
+    assert.equal(await readFile(path.join(root, 'environment/credentials.env'), 'utf8'), 'keep existing credentials\n');
+  });
 
-test('failed source upgrade restores the exact flat predecessor and its original units', async (t) => {
-  const root = await fixture(t);
-  await writeFile(path.join(root, 'installed/src/controller-server.js'), 'old controller\n');
-  await writeFile(path.join(root, 'installed/package.json'), '{"type":"module","version":"old"}\n');
-  await writeFile(path.join(root, 'environment/controller.env'), 'old environment\n');
-  await writeFile(path.join(root, 'units/vpn-gateway-controller.service'), 'ExecStart=node /opt/vpn-gateway/src/controller-server.js\n');
-  const originalInstall = await treeSnapshot(path.join(root, 'installed'));
-  const originalEnvironment = await treeSnapshot(path.join(root, 'environment'));
-  const originalUnits = await treeSnapshot(path.join(root, 'units'));
-  await cp(path.join(root, 'installed'), path.join(root, 'backup/install-root'), { recursive: true });
-  await cp(path.join(root, 'environment'), path.join(root, 'backup/environment-root'), { recursive: true });
-  await cp(path.join(root, 'units/vpn-gateway-controller.service'), path.join(root, 'backup/units/vpn-gateway-controller.service'));
-  await runInstaller(root, `
-trap restore_upgrade_deployment_files EXIT
-${sourceInstallation}
-printf '%s\\n' 'replacement unit' >"$SYSTEMD_ROOT/vpn-gateway-controller.service"
-printf '%s\\n' 'replacement environment' >"$ENV_ROOT/controller.env"
-exit 42
-`).then(() => assert.fail('the injected deployment failure must fail'), (error) => assert.equal(error.code, 42));
-  assert.deepEqual(await treeSnapshot(path.join(root, 'installed')), originalInstall);
-  assert.deepEqual(await treeSnapshot(path.join(root, 'environment')), originalEnvironment);
-  assert.deepEqual(await treeSnapshot(path.join(root, 'units')), originalUnits);
-});
+  test(`failed source upgrade restores the exact ${layout} predecessor and its original units`, async (t) => {
+    const root = await fixture(t);
+    const controller = layout === 'flat' ? 'controller-server.js' : 'control/controller-server.js';
+    const retired = layout === 'flat' ? await oldSourceFiles() : retiredNestedFiles;
+    await writeSourceFiles(root, retired, 'old source\n');
+    await writeSourceFiles(root, [controller, 'operator-hook.js'], 'old controller and extension\n');
+    await writeFile(path.join(root, 'installed/package.json'), '{"type":"module","version":"old"}\n');
+    await writeFile(path.join(root, 'environment/controller.env'), 'old environment\n');
+    await writeFile(path.join(root, 'units/vpn-gateway-controller.service'), `ExecStart=node /opt/vpn-gateway/src/${controller}\n`);
+    const originalInstall = await treeSnapshot(path.join(root, 'installed'));
+    const originalEnvironment = await treeSnapshot(path.join(root, 'environment'));
+    const originalUnits = await treeSnapshot(path.join(root, 'units'));
+    await cp(path.join(root, 'installed'), path.join(root, 'backup/install-root'), { recursive: true });
+    await cp(path.join(root, 'environment'), path.join(root, 'backup/environment-root'), { recursive: true });
+    await cp(path.join(root, 'units/vpn-gateway-controller.service'), path.join(root, 'backup/units/vpn-gateway-controller.service'));
+    await runInstaller(root, `
+  trap restore_upgrade_deployment_files EXIT
+  ${sourceInstallation}
+  ${retired.map((filename) => `[[ ! -e "$INSTALL_ROOT/src/${filename}" ]] || exit 43`).join('\n')}
+  printf '%s\\n' 'replacement unit' >"$SYSTEMD_ROOT/vpn-gateway-controller.service"
+  printf '%s\\n' 'replacement environment' >"$ENV_ROOT/controller.env"
+  exit 42
+  `).then(() => assert.fail('the injected deployment failure must fail'), (error) => assert.equal(error.code, 42));
+    assert.deepEqual(await treeSnapshot(path.join(root, 'installed')), originalInstall);
+    assert.deepEqual(await treeSnapshot(path.join(root, 'environment')), originalEnvironment);
+    assert.deepEqual(await treeSnapshot(path.join(root, 'units')), originalUnits);
+  });
+}
 
-test('retired-source cleanup rejects a symlink before removing any old module', async (t) => {
-  const root = await fixture(t);
-  const outside = path.join(root, 'outside.js');
-  await writeFile(outside, 'must remain untouched\n');
-  await writeFile(path.join(root, 'installed/src/admin-page.js'), 'old source\n');
-  await symlink(outside, path.join(root, 'installed/src/websocket-probe.js'));
-  await assert.rejects(runInstaller(root, 'remove_retired_source_files'), /must be a regular file, not a symlink/u);
-  assert.equal(await readFile(path.join(root, 'installed/src/admin-page.js'), 'utf8'), 'old source\n');
-  assert.equal(await readFile(outside, 'utf8'), 'must remain untouched\n');
-  assert.equal((await lstat(path.join(root, 'installed/src/websocket-probe.js'))).isSymbolicLink(), true);
-});
+for (const candidate of ['websocket-probe.js', ...retiredNestedFiles]) {
+  test(`retired-source cleanup rejects symlink ${candidate} before removing any old module`, async (t) => {
+    const root = await fixture(t);
+    const outside = path.join(root, 'outside.js');
+    await writeFile(outside, 'must remain untouched\n');
+    const preserved = ['admin-page.js', ...retiredNestedFiles.filter((file) => file !== candidate)];
+    await writeSourceFiles(root, preserved, 'old source\n');
+    await mkdir(path.join(root, 'installed/src', path.dirname(candidate)), { recursive: true });
+    await symlink(outside, path.join(root, 'installed/src', candidate));
+    await assert.rejects(runInstaller(root, 'remove_retired_source_files'), /must be a regular file, not a symlink/u);
+    for (const filename of preserved) {
+      assert.equal(await readFile(path.join(root, 'installed/src', filename), 'utf8'), 'old source\n');
+    }
+    assert.equal(await readFile(outside, 'utf8'), 'must remain untouched\n');
+    assert.equal((await lstat(path.join(root, 'installed/src', candidate))).isSymbolicLink(), true);
+  });
+}
+
+for (const candidate of retiredNestedFiles) {
+  test(`retired-source cleanup rejects a symlink parent of ${candidate} before removing any old module`, async (t) => {
+    const root = await fixture(t);
+    const outside = path.join(root, 'outside');
+    await mkdir(outside);
+    await writeFile(path.join(outside, path.basename(candidate)), 'must remain untouched\n');
+    const candidateParent = path.dirname(candidate);
+    const sameParent = retiredNestedFiles.filter((file) => file.startsWith(`${candidateParent}/`));
+    const otherParents = retiredNestedFiles.filter((file) => !sameParent.includes(file));
+    for (const file of sameParent) {
+      const outsideFile = path.join(outside, path.relative(candidateParent, file));
+      await mkdir(path.dirname(outsideFile), { recursive: true });
+      await writeFile(outsideFile, file === candidate ? 'must remain untouched\n' : 'old source\n');
+    }
+    await writeSourceFiles(root, ['admin-page.js', ...otherParents], 'old source\n');
+    await symlink(outside, path.join(root, 'installed/src', path.dirname(candidate)));
+    await assert.rejects(runInstaller(root, 'remove_retired_source_files'), /parent .* must be a real directory, not a symlink/u);
+    for (const filename of ['admin-page.js', ...retiredNestedFiles]) {
+      const content = filename === candidate ? 'must remain untouched\n' : 'old source\n';
+      assert.equal(await readFile(path.join(root, 'installed/src', filename), 'utf8'), content);
+    }
+    assert.equal((await lstat(path.join(root, 'installed/src', path.dirname(candidate)))).isSymbolicLink(), true);
+  });
+}
 
 test('deployment launchers locate the repository from an unrelated working directory', async (t) => {
   const root = await fixture(t);

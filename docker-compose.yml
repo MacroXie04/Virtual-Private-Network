@@ -26,8 +26,6 @@ services:
       DATA_DIR: /data
       CONTROLLER_SOCKET: /run/vpn-gateway/controller.sock
       SUPERVISE: "1"
-      MIGRATE_LEGACY: "${MIGRATE_LEGACY:-}"
-      MIGRATE_REALITY: "${MIGRATE_REALITY:-}"
       TS_AUTH_KEY_FILE: /run/secrets/tailscale-auth-key
       TS_API_KEY_FILE: "${TS_API_KEY_FILE:+/run/secrets/tailscale-api-key}"
       SINGBOX_BIN: /usr/local/bin/sing-box

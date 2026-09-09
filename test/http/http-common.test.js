@@ -2,13 +2,9 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import test from 'node:test';
-import {
-  FixedWindowRateLimiter,
-  createHttpService,
-  parseOriginForm,
-  sendGenericError,
-  sendResponse,
-} from '../../src/http/http-common.js';
+import { FixedWindowRateLimiter } from '../../src/http/shared/rate-limit.js';
+import { createHttpService, sendGenericError, sendResponse } from '../../src/http/shared/service.js';
+import { parseOriginForm } from '../../src/http/shared/input.js';
 
 function request(address, { method = 'GET', path = '/', headers = {} } = {}) {
   return new Promise((resolve, reject) => {

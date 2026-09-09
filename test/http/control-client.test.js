@@ -4,7 +4,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ControlError, createControlClient } from '../../src/control/control-client.js';
+import { ControlError } from '../../src/control/socket/client-transport.js';
+import { createControlClient } from '../../src/control/socket/client.js';
 
 async function controller(t, responder) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'vpn-control-test-'));
@@ -46,6 +47,21 @@ test('control client sends one allowlisted NDJSON envelope and returns result', 
   assert.equal(observed.expectedRevision, 7);
   assert.equal(observed.displayName, 'Alice');
   assert.match(observed.id, /^[0-9a-f-]{36}$/u);
+});
+
+test('control client forwards exit additions and removals with mutation authority', async (t) => {
+  const observed = [];
+  const socketPath = await controller(t, (request) => {
+    observed.push(request);
+    return { id: request.id, ok: true, result: { revision: request.expectedRevision + 1 } };
+  });
+  const client = createControlClient({ socketPath });
+  assert.deepEqual(await client.addExit('session', 'csrf-add', 7, 'tailscale-device'), { revision: 8 });
+  assert.deepEqual(await client.removeExit('session', 'csrf-remove', 8, '0123456789abcdef'), { revision: 9 });
+  assert.deepEqual(observed.map(({ id, ...request }) => request), [
+    { op: 'exit.add', sessionId: 'session', csrf: 'csrf-add', expectedRevision: 7, deviceId: 'tailscale-device' },
+    { op: 'exit.remove', sessionId: 'session', csrf: 'csrf-remove', expectedRevision: 8, exitId: '0123456789abcdef' },
+  ]);
 });
 
 test('control client rejects unknown operations and genericizes controller errors', async (t) => {

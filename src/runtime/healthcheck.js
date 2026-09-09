@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import { createControlClient } from '../control/control-client.js';
+import { createControlClient } from '../control/socket/client.js';
 
 export async function checkHealth(options = {}) {
   const control = createControlClient({ timeoutMs: 9_000, ...options });
