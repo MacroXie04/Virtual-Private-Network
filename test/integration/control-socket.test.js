@@ -4,8 +4,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createControlClient } from '../../src/control/control-client.js';
-import { createControlSocketService } from '../../src/control/control-socket.js';
+import { createControlClient } from '../../src/control/socket/client.js';
+import { createControlSocketService } from '../../src/control/socket/server.js';
 
 async function rawRequest(socketPath, bytes, { waitForEnd = true } = {}) {
   return new Promise((resolve, reject) => {

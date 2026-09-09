@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { chmod, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
-import { bootstrap } from '../../src/state/bootstrap-service.js';
-import { readSecretFile } from '../../src/state/bootstrap-files.js';
-import { verifyAdminPassword } from '../../src/core/credentials.js';
+import { bootstrap } from '../../src/state/bootstrap/service.js';
+import { readSecretFile } from '../../src/state/bootstrap/secrets/files.js';
+import { verifyAdminPassword } from '../../src/core/identity/credentials.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { temporary, privateFile, environment } from '../fixtures/bootstrap.js';
 

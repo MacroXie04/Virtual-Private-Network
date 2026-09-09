@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAdminServer } from '../../src/http/admin-application.js';
-import { ControlError } from '../../src/control/control-client.js';
+import { createAdminServer } from '../../src/http/admin/application.js';
+import { ControlError } from '../../src/control/socket/client-transport.js';
 
 import { request, encoded, deferred } from '../helpers/admin-http.js';
 

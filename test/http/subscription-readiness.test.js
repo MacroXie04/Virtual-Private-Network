@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSubscriptionServer } from '../../src/http/subscription-application.js';
-import { readSubscriptionView } from '../../src/http/subscription-data.js';
+import { createSubscriptionServer } from '../../src/http/subscription/application.js';
+import { readSubscriptionView } from '../../src/http/subscription/data.js';
 
 import { request, projection } from '../helpers/subscription-http.js';
 

@@ -1,7 +1,8 @@
 import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
 
-const DEVICES_URL = 'https://api.tailscale.com/api/v2/tailnet/-/devices';
+// The default device projection omits advertisedRoutes and enabledRoutes.
+const DEVICES_URL = 'https://api.tailscale.com/api/v2/tailnet/-/devices?fields=all';
 const DEFAULT_ROUTES = new Set(['0.0.0.0/0', '::/0']);
 const MAX_EXIT_NODES = 128;
 

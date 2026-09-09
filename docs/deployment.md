@@ -2,6 +2,8 @@
 
 Start with the [prerequisites and secret-file requirements](../README.md#prerequisites). Run the commands below from the repository root. After deployment, complete the [operational verification](operations.md#verification).
 
+Use a fresh data directory or an existing schema-v3 WebSocket gateway. Earlier configuration formats are unsupported; keep their data separate when creating a new deployment.
+
 ## Configure the Named Tunnel
 
 Create a [remotely managed Named Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/) in the Cloudflare dashboard, then add its [published application routes](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/#2a-publish-an-application). On Docker the addresses are evaluated inside the network namespace shared by the gateway and cloudflared containers.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 import test from 'node:test';
-import { verifySubscriptionToken } from '../../src/core/credentials.js';
+import { verifySubscriptionToken } from '../../src/core/identity/credentials.js';
 import { fixture, request } from '../fixtures/controller.js';
 
 test('controller login, create, disable, enable, and revoke are isolated and transactional', async () => {

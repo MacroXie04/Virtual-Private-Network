@@ -15,10 +15,10 @@ import { createConnection, createServer } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { renderSingBoxClientConfig } from '../../src/core/client-subscriptions.js';
-import { renderSingBoxConfig } from '../../src/core/server-render.js';
-import { deriveExitUuid, exitProfileId } from '../../src/core/exit-profiles.js';
-import { probeSocksConnect } from '../../src/runtime/health-probe.js';
+import { renderSingBoxClientConfig } from '../../src/core/subscriptions/clients.js';
+import { renderSingBoxConfig } from '../../src/core/server/render.js';
+import { deriveExitUuid, exitProfileId } from '../../src/core/identity/exit-profiles.js';
+import { probeSocksConnect } from '../../src/runtime/health/socks-probe.js';
 import { FIXTURE_TIME, fixtureState, fixtureUser } from '../fixtures/state.js';
 
 const binary = process.env.SINGBOX_BIN || '/usr/local/bin/sing-box';

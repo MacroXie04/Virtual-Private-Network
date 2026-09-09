@@ -12,7 +12,7 @@ docker run --rm \
   --input-type=module \
   --eval '
     import { readFile } from "node:fs/promises";
-    import { renderSingBoxConfig } from "/app/src/core/server-render.js";
+    import { renderSingBoxConfig } from "/app/src/core/server/render.js";
     const state = JSON.parse(await readFile("/tmp/state.json", "utf8"));
     process.stdout.write(`${JSON.stringify(renderSingBoxConfig(state), null, 2)}\n`);
   ' >"$RUNNER_TEMP/sing-box.json"

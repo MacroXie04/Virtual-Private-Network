@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { buildSubscriptionView } from '../core/subscription-view.js';
-import { renderSingBoxConfig } from '../core/server-render.js';
-import { expectInteger } from '../core/validation.js';
+import { buildSubscriptionView } from '../core/subscriptions/view.js';
+import { renderSingBoxConfig } from '../core/server/render.js';
+import { expectInteger } from '../core/validation/values.js';
 import {
   NOFOLLOW,
   DIRECTORY,
@@ -10,17 +10,18 @@ import {
   DEFAULT_MAX_REVISIONS,
   DEFAULT_MAX_REVISION_BYTES,
   RepositoryError,
-} from './repository-policy.js';
-import { revisionPath, assertRevisionDirectory, revisionUsage } from './revision-directory.js';
+} from './filesystem/policy.js';
+import { revisionPath, assertRevisionDirectory, revisionUsage } from './filesystem/revision-directory.js';
 import {
   ensure,
   cleanupInterruptedWrites,
   listRevisions,
   removeRevision,
   pruneRevisions,
-} from './revision-retention.js';
-import { createRevision, readRevisionInternal } from './revision-content.js';
-import { readPointer, swapPointer, initialize } from './repository-pointers.js';
+} from './revisions/retention.js';
+import { assertSupportedRevisionSchema, readRevision } from './revisions/read.js';
+import { createRevision } from './revisions/write.js';
+import { readPointer, swapPointer, initialize } from './revisions/pointers.js';
 
 function validateGid(value, pathName) {
   if (value === null || value === undefined) return null;
@@ -35,7 +36,6 @@ export class RevisionRepository {
     renderView = buildSubscriptionView,
     maxRevisions = DEFAULT_MAX_REVISIONS,
     maxRevisionBytes = DEFAULT_MAX_REVISION_BYTES,
-    allowLegacyMigration = false,
   } = {}) {
     if (typeof NOFOLLOW !== 'number' || typeof DIRECTORY !== 'number') {
       throw new RepositoryError('UNSUPPORTED_PLATFORM', 'safe no-follow file operations are unavailable');
@@ -49,10 +49,6 @@ export class RevisionRepository {
     this.subscriptionGid = validateGid(subscriptionGid, 'subscriptionGid');
     this.renderConfig = renderConfig;
     this.renderView = renderView;
-    if (typeof allowLegacyMigration !== 'boolean') {
-      throw new TypeError('allowLegacyMigration must be boolean');
-    }
-    this.allowLegacyMigration = allowLegacyMigration;
     this.ownerUid = SERVICE_UID;
     this.ownerGid = PRIVATE_GID;
     this.maxRevisions = expectInteger(maxRevisions, 'maxRevisions', { min: 2, max: 256 });
@@ -98,17 +94,12 @@ export class RevisionRepository {
     return createRevision(this, value, options);
   }
 
-  async readRevisionInternal(id, allowLegacyMigration) {
-    return readRevisionInternal(this, id, allowLegacyMigration);
-  }
-
   async readRevision(id) {
-    return this.readRevisionInternal(id, this.allowLegacyMigration);
+    return readRevision(this, id);
   }
 
-  /** Recognize historical policy only for retirement after routed readiness. */
-  async readRevisionForRetirement(id) {
-    return this.readRevisionInternal(id, true);
+  async assertSupportedRevisionSchema(id) {
+    return assertSupportedRevisionSchema(this, id);
   }
 
   async readPointer(name) {

@@ -1,60 +1,5 @@
 # shellcheck shell=bash
-# Preserve migration credentials and publish deployment environment files.
-
-readonly LEGACY_SECRET_MIGRATOR='import { lstat } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
-const bootstrapModule = await import(pathToFileURL(process.env.BOOTSTRAP_MODULE).href);
-const migrationModule = await import(pathToFileURL(process.env.MIGRATION_MODULE).href);
-const inspection = await migrationModule.inspectLegacyV1({
-  envPath: process.env.LEGACY_ENV_FILE,
-  configPath: process.env.LEGACY_CONFIG_FILE,
-});
-const values = [
-  [process.env.AUTH_KEY_PATH, inspection.legacyConfig.authKey || inspection.legacyEnvironment.TS_AUTH_KEY || null, "auth key"],
-  [process.env.API_KEY_PATH, inspection.legacyEnvironment.TS_API_KEY || null, "API key"],
-];
-const present = {};
-for (const [destination, value, label] of values) {
-  present[label] = value !== null;
-  if (value === null) continue;
-  if (value.length < 8 || value.length > 512 || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) {
-    throw new Error("legacy " + label + " is invalid");
-  }
-  let exists = true;
-  try {
-    await lstat(destination);
-  } catch (error) {
-    if (error.code === "ENOENT") exists = false;
-    else throw error;
-  }
-  if (exists) {
-    const stored = await bootstrapModule.readSecretFile(destination, { description: "preserved " + label });
-    if (stored !== value) throw new Error("existing preserved " + label + " conflicts with legacy state");
-  } else {
-    await bootstrapModule.writePrivateFileExclusive(destination, Buffer.from(value, "utf8"));
-  }
-}
-process.stdout.write(JSON.stringify(present) + "\n");'
-
-preserve_legacy_credentials() {
-  env -i \
-    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    "BOOTSTRAP_MODULE=$INSTALL_ROOT/src/state/bootstrap-files.js" \
-    "MIGRATION_MODULE=$INSTALL_ROOT/src/migrations/legacy-v1-source.js" \
-    "LEGACY_ENV_FILE=$LEGACY_ENV_FILE" \
-    "LEGACY_CONFIG_FILE=$LEGACY_CONFIG_FILE" \
-    "AUTH_KEY_PATH=$AUTH_KEY_PATH" \
-    "API_KEY_PATH=$API_KEY_PATH" \
-    "$NODE_BIN" --input-type=module --eval "$LEGACY_SECRET_MIGRATOR"
-  for secret_file in "$AUTH_KEY_PATH" "$API_KEY_PATH"; do
-    if path_is_present "$secret_file"; then
-      [[ -f "$secret_file" && ! -L "$secret_file" && -s "$secret_file" ]] \
-        || die "$secret_file must be a non-empty regular file, not a symlink."
-      chown root:root "$secret_file"
-      chmod 0600 "$secret_file"
-    fi
-  done
-}
+# Publish protected deployment environment files.
 
 install_cloudflare_tunnel_token
 
@@ -87,14 +32,6 @@ case "$INSTALL_MODE" in
     else
       echo "==> Collecting first-install settings"
       create_fresh_controller_environment
-    fi
-    ;;
-  migrate)
-    echo "==> Preserving legacy Tailscale credentials in root-only secret files"
-    preserve_legacy_credentials
-    create_migration_controller_environment
-    if [[ -n "${TS_API_KEY_FILE:-}" ]]; then
-      preserve_or_create_secret "$API_KEY_PATH" TS_API_KEY_FILE "Tailscale API access token (optional)" no || true
     fi
     ;;
   existing)

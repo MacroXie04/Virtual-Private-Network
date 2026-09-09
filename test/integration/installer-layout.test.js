@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { assertInstallerMatches, assertInstallerExcludes, installerFunction, installerPosition, installerLastPosition, installerModule } from '../fixtures/installer.js';
+import { assertInstallerMatches, assertInstallerExcludes, installerFunction, installerPosition, installerLastPosition } from '../fixtures/installer.js';
 
 const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const readProjectFile = (relativePath) => readFile(path.join(projectRoot, relativePath), 'utf8');
@@ -25,9 +25,9 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
     readProjectFile('deploy/systemd/vpn-gateway-sing-box.service'),
     readProjectFile('deploy/systemd/vpn-gateway-admin.service'),
     readProjectFile('deploy/systemd/vpn-gateway-subscription.service'),
-    readProjectFile('src/state/repository-policy.js'),
-    readProjectFile('src/state/repository-files.js'),
-    readProjectFile('src/control/operational-files.js'),
+    readProjectFile('src/state/filesystem/policy.js'),
+    readProjectFile('src/state/filesystem/files.js'),
+    readProjectFile('src/control/authority/operational-files.js'),
   ]);
   const packageJson = JSON.parse(packageText);
 
@@ -56,45 +56,8 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
   assertInstallerMatches(/constants\.O_RDONLY \| constants\.O_NOFOLLOW/u);
   assertInstallerMatches(/before\.nlink !== 1 \|\| before\.uid !== 0 \|\| before\.gid !== 0/u);
   assertInstallerMatches(/!\[0o400, 0o600\]\.includes\(mode\)/u);
-  assertInstallerMatches(/query_unit_active_state vpn-sub\.service/u);
-  assertInstallerMatches(/query_upgrade_enablement vpn-sub\.service yes yes/u);
-  assertInstallerMatches(/runtimeGid: Number\(process\.env\.RUNTIME_GID\)/u);
-  assertInstallerMatches(/subscriptionGid: Number\(process\.env\.SUB_GID\)/u);
-  assertInstallerMatches(/sync -f "\$MIGRATION_MARKER\/state-copied"/u);
-  assertInstallerMatches(/sync -f "\$MIGRATION_MARKER\/state-published"/u);
-  assertInstallerMatches(/sync -f "\$MIGRATION_MARKER\/committed"/u);
-  assertInstallerMatches(
-    /if \[\[ "\$MIGRATION_RESUME" == yes \]\]; then[\s\S]*STATE_COPY_ALREADY_COMPLETE=no[\s\S]*if \[\[ "\$STATE_COPY_ALREADY_COMPLETE" != yes \]\]; then/u,
-    'every resumed legacy migration must refresh mutable Tailscale state after quiescing its source',
-  );
-  assertInstallerMatches(
-    /assert_distinct_migration_state_trees\(\) \{[\s\S]*stat -Lc '%d:%i' -- "\$source_tree"[\s\S]*stat -Lc '%d:%i' -- "\$destination_tree"[\s\S]*"\$source_identity" != "\$destination_identity"/u,
-    'legacy state separation must reject symlinked-ancestor and bind-mount aliases by device and inode',
-  );
-  const earlyStateAliasCheck = installerPosition(
-    'assert_distinct_migration_state_trees "$LEGACY_SOURCE_STATE" "$STATE_ROOT/tailscale"',
-  );
-  const migrationApproval = installerPosition('case "${MIGRATE_LEGACY:-}" in');
-  const replacementStateAliasCheck = installerPosition(
-    'assert_distinct_migration_state_trees "$LEGACY_SOURCE_STATE" "$STATE_ROOT/tailscale"',
-    earlyStateAliasCheck + 1,
-  );
-  const destructiveStateReplacement = installerPosition(
-    'rm -rf -- "$STATE_ROOT/tailscale"',
-    replacementStateAliasCheck,
-  );
-  assert.ok(
-    earlyStateAliasCheck > 0
-      && migrationApproval > earlyStateAliasCheck
-      && replacementStateAliasCheck > migrationApproval
-      && destructiveStateReplacement > replacementStateAliasCheck,
-    'state-tree alias rejection must run during read-only review and again immediately before replacement',
-  );
-  assert.match(
-    installerModule('legacy-cutover'),
-    /assert_distinct_migration_state_trees "\$LEGACY_SOURCE_STATE" "\$STATE_ROOT\/tailscale"\s*\n\s*rm -rf -- "\$STATE_ROOT\/tailscale"/u,
-    'the final device/inode check must be adjacent to destructive state replacement',
-  );
+  assertInstallerMatches(/systemctl show "\$retired_unit" --property=LoadState --value/u);
+  assertInstallerExcludes(/INSTALL_MODE=migrate|MIGRATION_|MIGRATE_/u);
   assertInstallerMatches(
     /create_admin_environment\(\) \{[\s\S]*write_environment_value ADMIN_PUBLIC_HOSTNAME "\$ADMIN_PUBLIC_HOSTNAME" >"\$temporary_file"/u,
   );
@@ -128,70 +91,12 @@ test('supported Node policy and bare-metal ES-module layout stay aligned', async
       && deferredTokenValidation > interruptedRollbackRecovery,
     'stored Tunnel token validation must be deferred until predecessor journal replay completes',
   );
-  const commitPromotionCall = installerPosition('  promote_interrupted_migration_commit\n');
-  const installModeClassification = installerPosition('INSTALL_MODE=fresh');
-  assert.ok(
-    commitPromotionCall > 0 && commitPromotionCall < installModeClassification,
-    'a durable inner legacy commit must be promoted before install-mode classification or bootstrap',
-  );
-  const commitPromotionBody = installerFunction('promote_interrupted_migration_commit');
-  const strictCommitValidation = commitPromotionBody.indexOf(
-    'validate_migration_marker_file "$MIGRATION_MARKER/$marker_name"',
-  );
-  const emptyCommitValidation = commitPromotionBody.indexOf(
-    'Migration phase marker $marker_name must be empty.',
-  );
-  const commitPromotion = commitPromotionBody.indexOf(
-    'mv -T -- "$inner_commit" "$MIGRATION_COMMITTED_MARKER"',
-  );
-  const sourceDirectorySync = commitPromotionBody.indexOf(
-    'sync -f "$MIGRATION_MARKER"',
-    commitPromotion,
-  );
-  const commitDirectorySync = commitPromotionBody.indexOf(
-    'sync -f "$STATE_ROOT"',
-    sourceDirectorySync,
-  );
-  assert.ok(
-    strictCommitValidation > 0
-      && emptyCommitValidation > strictCommitValidation
-      && commitPromotion > emptyCommitValidation
-      && sourceDirectorySync > commitPromotion
-      && commitDirectorySync > sourceDirectorySync,
-    'inner commit promotion must validate exact marker contents and durably sync both rename parents',
-  );
-  const migrationResume = installerPosition('if [[ "$MIGRATION_RESUME" == yes ]]; then');
-  const migrationResumeQuiesce = installerPosition(
-    'stop_unit_if_active_strict vpn-gateway-tunnel.service yes',
-    migrationResume,
-  );
-  const sourceInstallation = installerPosition(
-    'install -o root -g root -m 0644 "$REPO_DIR/package.json" "$INSTALL_ROOT/package.json"',
-  );
-  assert.ok(
-    migrationResume > 0
-      && installerPosition('LEGACY_SERVICES_STOPPED=yes', migrationResume) < migrationResumeQuiesce
-      && installerPosition('hold_migration_target_disabled', migrationResume) < migrationResumeQuiesce
-      && migrationResumeQuiesce < sourceInstallation,
-    'an uncommitted migration resume must quiesce every replacement unit before code or state mutation',
-  );
   const codeFlush = installerLastPosition('sync -f /opt\n');
   const environmentFlush = installerLastPosition('sync -f /etc\n');
   const commit = installerLastPosition('commit_upgrade_rollback_transaction\n');
   assert.ok(
     codeFlush > 0 && environmentFlush > codeFlush && commit > environmentFlush,
     'code and environment filesystems must flush before the durable upgrade commit',
-  );
-  const migrationBranch = installerLastPosition('if [[ "$INSTALL_MODE" == migrate ]]; then\n');
-  const migrationCodeFlush = installerPosition('sync -f /opt\n', migrationBranch);
-  const migrationEnvironmentFlush = installerPosition('sync -f /etc\n', migrationCodeFlush);
-  const migrationCommit = installerPosition('mv -- "$MIGRATION_MARKER/committed" "$MIGRATION_COMMITTED_MARKER"', migrationEnvironmentFlush);
-  assert.ok(
-    migrationBranch > 0
-      && migrationCodeFlush > migrationBranch
-      && migrationEnvironmentFlush > migrationCodeFlush
-      && migrationCommit > migrationEnvironmentFlush,
-    'code and environment filesystems must flush before the durable migration commit',
   );
   const restartIntent = installerLastPosition('prepare_upgrade_restart_journal\n');
   const bootHold = installerLastPosition('hold_upgrade_services_disabled\n');

@@ -18,12 +18,6 @@ readonly SECRET_ROOT="$ENV_ROOT/secrets"
 readonly AUTH_KEY_PATH="$SECRET_ROOT/tailscale-auth-key"
 readonly API_KEY_PATH="$SECRET_ROOT/tailscale-api-key"
 readonly TUNNEL_TOKEN_PATH="$SECRET_ROOT/cloudflare-tunnel-token"
-readonly LEGACY_ENV_FILE=/etc/vpn-sub.env
-readonly LEGACY_CONFIG_FILE=/etc/sing-box/config.json
-readonly LEGACY_STATE_DIRECTORY=/var/lib/sing-box/tailscale
-readonly LEGACY_SUDOERS=/etc/sudoers.d/vpn-sub
-readonly MIGRATION_MARKER="$STATE_ROOT/.legacy-migration-in-progress"
-readonly MIGRATION_COMMITTED_MARKER="$STATE_ROOT/.legacy-migration-committed"
 readonly UPGRADE_RESTART_JOURNAL="$STATE_ROOT/.upgrade-restart-in-progress"
 readonly UPGRADE_ROLLBACK_JOURNAL="$STATE_ROOT/.upgrade-rollback-in-progress"
 readonly INSTALLER_LOCK=/run/vpn-gateway-installer.lock
@@ -41,8 +35,8 @@ readonly -a INSTALLER_MODULES=(
   preflight.sh
   filesystem.sh
   canonical-settings.sh
+  service-namespace.sh
   deployment-state.sh
-  legacy-inspection.sh
   service-identities.sh
   revision-namespace.sh
   upgrade-backup.sh
@@ -53,11 +47,9 @@ readonly -a INSTALLER_MODULES=(
   upgrade-recovery.sh
   recovery-preflight.sh
   upgrade-transaction.sh
-  legacy-transaction.sh
   source-installation.sh
   credentials.sh
   configuration-installation.sh
-  legacy-cutover.sh
   service-installation.sh
   activation.sh
 )
@@ -80,10 +72,10 @@ source "$INSTALLER_DIR/preflight.sh"
 source "$INSTALLER_DIR/filesystem.sh"
 # shellcheck source=deploy/systemd/installer/canonical-settings.sh
 source "$INSTALLER_DIR/canonical-settings.sh"
+# shellcheck source=deploy/systemd/installer/service-namespace.sh
+source "$INSTALLER_DIR/service-namespace.sh"
 # shellcheck source=deploy/systemd/installer/deployment-state.sh
 source "$INSTALLER_DIR/deployment-state.sh"
-# shellcheck source=deploy/systemd/installer/legacy-inspection.sh
-source "$INSTALLER_DIR/legacy-inspection.sh"
 # shellcheck source=deploy/systemd/installer/service-identities.sh
 source "$INSTALLER_DIR/service-identities.sh"
 # shellcheck source=deploy/systemd/installer/revision-namespace.sh
@@ -104,16 +96,12 @@ source "$INSTALLER_DIR/upgrade-recovery.sh"
 source "$INSTALLER_DIR/recovery-preflight.sh"
 # shellcheck source=deploy/systemd/installer/upgrade-transaction.sh
 source "$INSTALLER_DIR/upgrade-transaction.sh"
-# shellcheck source=deploy/systemd/installer/legacy-transaction.sh
-source "$INSTALLER_DIR/legacy-transaction.sh"
 # shellcheck source=deploy/systemd/installer/source-installation.sh
 source "$INSTALLER_DIR/source-installation.sh"
 # shellcheck source=deploy/systemd/installer/credentials.sh
 source "$INSTALLER_DIR/credentials.sh"
 # shellcheck source=deploy/systemd/installer/configuration-installation.sh
 source "$INSTALLER_DIR/configuration-installation.sh"
-# shellcheck source=deploy/systemd/installer/legacy-cutover.sh
-source "$INSTALLER_DIR/legacy-cutover.sh"
 # shellcheck source=deploy/systemd/installer/service-installation.sh
 source "$INSTALLER_DIR/service-installation.sh"
 # shellcheck source=deploy/systemd/installer/activation.sh

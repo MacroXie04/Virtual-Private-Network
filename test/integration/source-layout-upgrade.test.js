@@ -121,7 +121,84 @@ async function oldSourceFiles() {
   ];
 }
 
-const retiredNestedFiles = ['core/render.js', 'http/http-common.js', 'migrations/legacy-v2.js'];
+const retiredNestedFiles = [
+  'core/render.js',
+  'http/http-common.js',
+  'control/ingress-recovery.js',
+  'state/bootstrap-ingress-migration.js',
+  'migrations/legacy-v2.js',
+  'migrations/legacy-reality.js',
+  'migrations/legacy-v1-parse.js',
+  'migrations/legacy-v1-source.js',
+  'migrations/legacy-v1-state.js',
+  'migrations/legacy-v2-policy.js',
+  'migrations/legacy-v2-state.js',
+  'migrations/migrate-v1.js',
+  'migrations/migration-backup.js',
+  'migrations/migration-errors.js',
+  'migrations/migration-lineage-record.js',
+  'migrations/migration-lineage.js',
+  'migrations/migration-marker.js',
+  'migrations/migration-recovery.js',
+  'control/application.js',
+  'control/control-client.js',
+  'control/control-socket.js',
+  'control/controller-sessions.js',
+  'control/controller.js',
+  'control/operational-files.js',
+  'control/operations/gateway.js',
+  'control/operations/mutations.js',
+  'control/operations/users.js',
+  'control/process-settings.js',
+  'control/request-contract.js',
+  'control/request-dispatch.js',
+  'control/runtime-transactions.js',
+  'control/socket-files.js',
+  'control/socket-protocol.js',
+  'control/state-views.js',
+  'control/web-processes.js',
+  'core/client-subscriptions.js',
+  'core/credentials.js',
+  'core/exit-profiles.js',
+  'core/lifecycle.js',
+  'core/server-config-assert.js',
+  'core/server-config-model.js',
+  'core/server-render.js',
+  'core/single-exit-config-assert.js',
+  'core/state-schema.js',
+  'core/subscription-view.js',
+  'core/user-records.js',
+  'core/validation.js',
+  'http/admin-application.js',
+  'http/admin-auth.js',
+  'http/admin-page.js',
+  'http/admin-request.js',
+  'http/admin-routes.js',
+  'http/http-service.js',
+  'http/rate-limit.js',
+  'http/request-input.js',
+  'http/subscription-application.js',
+  'http/subscription-data.js',
+  'runtime/health-probe.js',
+  'runtime/runtime.js',
+  'runtime/websocket-probe.js',
+  'state/bootstrap-candidate.js',
+  'state/bootstrap-credentials.js',
+  'state/bootstrap-environment.js',
+  'state/bootstrap-errors.js',
+  'state/bootstrap-existing.js',
+  'state/bootstrap-files.js',
+  'state/bootstrap-initialize.js',
+  'state/bootstrap-recovery.js',
+  'state/bootstrap-service.js',
+  'state/repository-files.js',
+  'state/repository-pointers.js',
+  'state/repository-policy.js',
+  'state/revision-content.js',
+  'state/revision-directory.js',
+  'state/revision-manifest.js',
+  'state/revision-retention.js',
+];
 
 async function writeSourceFiles(root, filenames, content) {
   for (const filename of filenames) {
@@ -147,7 +224,7 @@ test('fresh source installation copies nested modules with the package and execu
       assert.deepEqual([metadata.uid, metadata.gid], [0, 0], `${relative || 'src/'} stays root-owned`);
     }
   }
-  await execFile(process.execPath, ['--input-type=module', '--eval', 'await import("./src/core/server-render.js")'], {
+  await execFile(process.execPath, ['--input-type=module', '--eval', 'await import("./src/core/server/render.js")'], {
     cwd: path.join(root, 'installed'),
     timeout: 10_000,
   });
@@ -227,7 +304,15 @@ for (const candidate of retiredNestedFiles) {
     const outside = path.join(root, 'outside');
     await mkdir(outside);
     await writeFile(path.join(outside, path.basename(candidate)), 'must remain untouched\n');
-    await writeSourceFiles(root, ['admin-page.js', ...retiredNestedFiles.filter((file) => file !== candidate)], 'old source\n');
+    const candidateParent = path.dirname(candidate);
+    const sameParent = retiredNestedFiles.filter((file) => file.startsWith(`${candidateParent}/`));
+    const otherParents = retiredNestedFiles.filter((file) => !sameParent.includes(file));
+    for (const file of sameParent) {
+      const outsideFile = path.join(outside, path.relative(candidateParent, file));
+      await mkdir(path.dirname(outsideFile), { recursive: true });
+      await writeFile(outsideFile, file === candidate ? 'must remain untouched\n' : 'old source\n');
+    }
+    await writeSourceFiles(root, ['admin-page.js', ...otherParents], 'old source\n');
     await symlink(outside, path.join(root, 'installed/src', path.dirname(candidate)));
     await assert.rejects(runInstaller(root, 'remove_retired_source_files'), /parent .* must be a real directory, not a symlink/u);
     for (const filename of ['admin-page.js', ...retiredNestedFiles]) {

@@ -1,0 +1,10 @@
+export const STATE_SCHEMA_VERSION = 3;
+export const SUBSCRIPTION_VIEW_SCHEMA_VERSION = 2;
+export const MAX_USERS = 256;
+export const MAX_USER_RECORDS = 1024;
+export const MAX_REVOKED_USERS = 256;
+export const HEALTH_USERNAME = 'vpn-health';
+export const HEALTH_PASSWORD_BYTES = 32;
+export const VLESS_LISTEN_HOST = '127.0.0.1';
+export const VLESS_LISTEN_PORT = 8443;
+export const PUBLIC_VLESS_PORT = 443;

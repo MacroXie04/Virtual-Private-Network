@@ -1,13 +1,6 @@
 # shellcheck shell=bash
 # Track transaction state and validate every protected revision namespace.
 
-LEGACY_SUB_WAS_ACTIVE=no
-LEGACY_SINGBOX_WAS_ACTIVE=no
-LEGACY_SUB_WAS_ENABLED=no
-LEGACY_SINGBOX_WAS_ENABLED=no
-LEGACY_SERVICES_STOPPED=no
-MIGRATION_STAGING=""
-MIGRATION_MARKER_STAGING=""
 SECRET_STAGING=""
 UPGRADE_WAS_ACTIVE=no
 UPGRADE_WAS_ENABLED=no
@@ -76,6 +69,26 @@ validate_upgrade_revision() {
       die "Protected revision file is empty or exceeds its storage bound: $revision_path/$file_name"
     fi
   done
+  assert_supported_revision_file "$revision_path/state.json"
+}
+
+assert_supported_revision_file() {
+  env -i \
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "STATE_FILE=$1" \
+    "REPOSITORY_FILES_MODULE=$REPO_DIR/src/state/filesystem/files.js" \
+    "$NODE_BIN" --input-type=module --eval '
+      import { pathToFileURL } from "node:url";
+      const { readNoFollow } = await import(pathToFileURL(process.env.REPOSITORY_FILES_MODULE).href);
+      const bytes = await readNoFollow(process.env.STATE_FILE, {
+        maxBytes: 1024 * 1024, expectedMode: 0o600,
+      });
+      let state;
+      try { state = JSON.parse(bytes.toString("utf8")); } catch { process.exit(0); }
+      if (Number.isInteger(state?.schemaVersion) && state.schemaVersion !== 3) {
+        throw new Error("Unsupported state schema; preserve this backup and use a new data directory.");
+      }
+    '
 }
 
 validate_upgrade_pointer_target() {
@@ -154,7 +167,7 @@ validate_upgrade_temporary_revision() {
   done
 }
 
-# Older v2 units ran the root controller with vpn-admin as its effective group.
+# Earlier service units ran the root controller with vpn-admin as its effective group.
 # Their root-owned private files could therefore inherit that group even though
 # group permission bits were closed. Normalize only that exact, known-safe
 # historical shape after the service set is stopped and before snapshotting it.
@@ -177,7 +190,7 @@ normalize_upgrade_repository_ownership() {
     [[ "$owner_id" == 0 \
         && ( "$group_id" == 0 || "$group_id" == "$ADMIN_GID_VALUE" ) \
         && ( "$permission_mode" == 700 || "$permission_mode" == 751 ) ]] \
-      || die "Revision directory has unsafe legacy ownership or mode: $revision_path"
+      || die "Revision directory has unsafe ownership or mode: $revision_path"
     if [[ "$group_id" == "$ADMIN_GID_VALUE" ]]; then
       chown root:root "$revision_path"
     fi
@@ -191,7 +204,7 @@ normalize_upgrade_repository_ownership() {
           IFS=: read -r owner_id group_id permission_mode link_count <<<"$stat_record"
           [[ "$owner_id" == 0 && "$permission_mode" == 600 && "$link_count" == 1 \
               && ( "$group_id" == 0 || "$group_id" == "$ADMIN_GID_VALUE" ) ]] \
-            || die "Private revision entry has unsafe legacy ownership or mode: $file_path"
+            || die "Private revision entry has unsafe ownership or mode: $file_path"
           if [[ "$group_id" == "$ADMIN_GID_VALUE" ]]; then
             chown root:root "$file_path"
           fi
@@ -215,7 +228,7 @@ normalize_upgrade_repository_ownership() {
     IFS=: read -r owner_id group_id permission_mode link_count <<<"$stat_record"
     [[ "$owner_id" == 0 && "$permission_mode" == 600 && "$link_count" == 1 \
         && ( "$group_id" == 0 || "$group_id" == "$ADMIN_GID_VALUE" ) ]] \
-      || die "Maintenance marker has unsafe legacy ownership or mode."
+      || die "Maintenance marker has unsafe ownership or mode."
     if [[ "$group_id" == "$ADMIN_GID_VALUE" ]]; then
       chown root:root "$STATE_ROOT/maintenance"
     fi

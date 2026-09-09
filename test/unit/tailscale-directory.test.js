@@ -15,6 +15,30 @@ function response(body, { ok = true, status = 200 } = {}) {
   };
 }
 
+test('exit-node discovery requests the full device projection containing routes', async () => {
+  const device = {
+    id: 'node-a', hostname: 'exit-a', authorized: true, addresses: ['100.64.0.1'],
+  };
+  let requests = 0;
+  const nodes = await fetchExitNodes('secret-api-key', {
+    fetchImpl: async (input) => {
+      requests += 1;
+      const url = new URL(input);
+      assert.equal(url.origin, 'https://api.tailscale.com');
+      assert.equal(url.pathname, '/api/v2/tailnet/-/devices');
+      // Mirror the API: default device fields do not include routing approval.
+      const routes = url.searchParams.get('fields') === 'all' ? {
+        advertisedRoutes: ['0.0.0.0/0'], enabledRoutes: ['0.0.0.0/0'],
+      } : {};
+      return response({ devices: [{ ...device, ...routes }] });
+    },
+  });
+  assert.equal(requests, 1);
+  assert.deepEqual(nodes, [{
+    deviceId: 'node-a', name: 'exit-a', ipv4: '100.64.0.1', ipv6: null,
+  }]);
+});
+
 test('exit-node directory returns only authorized devices with approved default routes', async () => {
   const nodes = await fetchExitNodes('secret-api-key', {
     fetchImpl: async (_url, options) => {

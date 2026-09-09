@@ -1,5 +1,5 @@
 import { pathToFileURL } from 'node:url';
-import { createControllerApplication } from './application.js';
+import { createControllerApplication } from './app/application.js';
 
 async function main() {
   const app = await createControllerApplication();

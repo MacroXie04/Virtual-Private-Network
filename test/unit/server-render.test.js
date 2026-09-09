@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { hashSubscriptionToken } from '../../src/core/credentials.js';
-import { deriveExitUuid, exitProfileId } from '../../src/core/exit-profiles.js';
-import { assertFailClosedConfig } from '../../src/core/server-config-assert.js';
-import { BLOCKED_NON_INTERNET_CIDRS } from '../../src/core/server-config-model.js';
-import { buildRuntimeHealth, renderSingBoxConfig } from '../../src/core/server-render.js';
+import { hashSubscriptionToken } from '../../src/core/identity/credentials.js';
+import { deriveExitUuid, exitProfileId } from '../../src/core/identity/exit-profiles.js';
+import { assertFailClosedConfig } from '../../src/core/server/assert.js';
+import { BLOCKED_NON_INTERNET_CIDRS } from '../../src/core/server/model.js';
+import { buildRuntimeHealth, renderSingBoxConfig } from '../../src/core/server/render.js';
 
-import { renderSingBoxClientConfig, renderVlessLinks } from '../../src/core/client-subscriptions.js';
+import { renderSingBoxClientConfig, renderVlessLinks } from '../../src/core/subscriptions/clients.js';
 import { fixtureState, fixtureUser } from '../fixtures/state.js';
 
 import { lifecycleState, multipleExitState } from '../fixtures/render-state.js';

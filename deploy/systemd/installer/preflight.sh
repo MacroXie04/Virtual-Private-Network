@@ -16,7 +16,7 @@ prompt_required() {
   local secret="$3"
   local value="${!variable_name-}"
   if [[ -z "$value" ]]; then
-    [[ -t 0 ]] || die "$variable_name must be set for a non-interactive installation or migration."
+    [[ -t 0 ]] || die "$variable_name must be set for a non-interactive installation."
     if [[ "$secret" == yes ]]; then
       read -r -s -p "$label: " value
       echo

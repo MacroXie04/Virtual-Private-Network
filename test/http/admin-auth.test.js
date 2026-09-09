@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAdminServer } from '../../src/http/admin-application.js';
+import { createAdminServer } from '../../src/http/admin/application.js';
 
 import { request, cookieValue, encoded } from '../helpers/admin-http.js';
 
@@ -58,6 +58,8 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
   assert.equal(calls.length, 0);
   const loginPage = await request(address, '/login');
   assert.equal(loginPage.status, 200);
+  // A no-referrer document makes ordinary browser form POSTs send Origin: null.
+  assert.equal(loginPage.headers['referrer-policy'], 'same-origin');
   const csrfCookie = cookieValue(loginPage.headers['set-cookie'], '__Host-vpn_admin_login_csrf');
   const csrf = /name="csrf" value="([A-Za-z0-9_-]+)"/u.exec(loginPage.body)?.[1];
   assert.ok(csrfCookie);
@@ -73,6 +75,14 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
     body: loginBody,
   });
   assert.equal(missingOrigin.status, 403);
+  assert.equal(calls.length, 0);
+
+  const nullOrigin = await request(address, '/login', {
+    method: 'POST',
+    headers: { origin: 'null', cookie: csrfCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: loginBody,
+  });
+  assert.equal(nullOrigin.status, 403);
   assert.equal(calls.length, 0);
 
   const login = await request(address, '/login', {
@@ -96,6 +106,7 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
 
   const dashboard = await request(address, '/', { headers: { cookie: sessionCookie } });
   assert.equal(dashboard.status, 200);
+  assert.equal(dashboard.headers['referrer-policy'], 'same-origin');
   assert.match(dashboard.body, /Alice/u);
   assert.match(dashboard.headers['content-security-policy'], /frame-ancestors 'none'/u);
   assert.equal(dashboard.headers['strict-transport-security'], 'max-age=31536000');
@@ -124,6 +135,7 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
 
   const exportResponse = await request(address, '/users/alice/export', { headers: { cookie: sessionCookie } });
   assert.equal(exportResponse.status, 200);
+  assert.equal(exportResponse.headers['referrer-policy'], 'no-referrer');
   assert.equal(exportResponse.body, 'vless://exported\n');
   assert.doesNotMatch(exportResponse.body, /raw-once/u);
   assert.equal((await request(address, '/users/alice/status', { headers: { cookie: sessionCookie } })).status, 404);

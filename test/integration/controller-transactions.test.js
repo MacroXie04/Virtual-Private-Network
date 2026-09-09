@@ -5,6 +5,43 @@ import test from 'node:test';
 
 import { fixture, request, assertMarkerMissing } from '../fixtures/controller.js';
 
+test('recovery rejects an unfinished unsupported conversion before changing state or runtime', async () => {
+  const { controller, repository, runtime, dataDir } = await fixture({ authKey: 'test-enrollment-credential' });
+  const current = await repository.readCurrent();
+  const markerPath = path.join(dataDir, '.legacy-migration-in-progress');
+  await writeFile(markerPath, 'pending\n', { mode: 0o600 });
+
+  await assert.rejects(controller.recover(), (error) => error.code === 'UNSUPPORTED_DATA');
+  assert.equal(runtime.restarts, 0);
+  assert.equal(runtime.probes, 0);
+  assert.equal((await repository.readCurrent()).id, current.id);
+  assert.equal((await repository.readRuntime()).id, current.id);
+  assert.equal((await repository.readCurrent()).state.tailscale.authKey, 'test-enrollment-credential');
+  assert.equal(await readFile(markerPath, 'utf8'), 'pending\n');
+  await assertMarkerMissing(dataDir);
+});
+
+test('recovery rejects an unsupported runtime schema before replacing its pointer', async () => {
+  const { controller, repository, runtime, dataDir } = await fixture();
+  const current = await repository.readCurrent();
+  const candidate = await repository.createRevision({
+    ...current.state, revision: 1, updatedAt: '2026-01-01T00:00:01.000Z',
+  }, { operation: 'update' });
+  await repository.activateRuntime(candidate.id);
+  const statePath = path.join(candidate.path, 'state.json');
+  const unsupported = { ...JSON.parse(await readFile(statePath, 'utf8')), schemaVersion: 2 };
+  const bytes = JSON.stringify(unsupported);
+  await writeFile(statePath, bytes);
+
+  await assert.rejects(controller.recover(), (error) => error.code === 'UNSUPPORTED_SCHEMA');
+  assert.equal(runtime.restarts, 0);
+  assert.equal(runtime.probes, 0);
+  assert.equal(await repository.readPointer('current'), current.id);
+  assert.equal(await repository.readPointer('runtime'), candidate.id);
+  assert.equal(await readFile(statePath, 'utf8'), bytes);
+  await assertMarkerMissing(dataDir);
+});
+
 test('outer deployment journals block repository mutations until installer commit', async () => {
   const { controller, repository, dataDir } = await fixture();
   await controller.recover();

@@ -139,23 +139,6 @@ hold_upgrade_services_disabled() {
   fi
 }
 
-hold_migration_target_disabled() {
-  local target_state
-  target_state="$(query_upgrade_enablement vpn-gateway.target no yes)"
-  if [[ "$target_state" == enabled ]]; then
-    systemctl disable vpn-gateway.target >/dev/null 2>&1 \
-      || die "Could not keep vpn-gateway.target disabled during legacy migration."
-    target_state="$(query_upgrade_enablement vpn-gateway.target no yes)"
-  fi
-  [[ "$target_state" == disabled || "$target_state" == not-found ]] \
-    || die "vpn-gateway.target is not safely disabled during legacy migration."
-  sync -f "$SYSTEMD_ROOT"
-  if [[ -d "$SYSTEMD_ROOT/multi-user.target.wants" \
-      && ! -L "$SYSTEMD_ROOT/multi-user.target.wants" ]]; then
-    sync -f "$SYSTEMD_ROOT/multi-user.target.wants"
-  fi
-}
-
 quiesce_upgrade_services_for_rollback() {
   local service_name
   local -a service_names=(
@@ -207,35 +190,4 @@ stop_unit_if_active_strict() {
   active_state="$(query_unit_active_state "$unit_name" "$allow_not_found")"
   [[ "$active_state" == inactive || "$active_state" == failed || "$active_state" == unknown ]] \
     || die "$unit_name did not reach a conclusively stopped state."
-}
-
-restore_legacy_service_state() {
-  local unit_name="$1"
-  local was_active="$2"
-  local was_enabled="$3"
-  local active_state enablement_state
-  if [[ "$was_enabled" == yes ]]; then
-    systemctl enable "$unit_name"
-  fi
-  if [[ "$was_active" == yes ]]; then
-    systemctl start "$unit_name"
-  else
-    stop_unit_if_active_strict "$unit_name"
-  fi
-  active_state="$(query_unit_active_state "$unit_name")"
-  enablement_state="$(query_upgrade_enablement "$unit_name" yes yes)"
-  if [[ "$was_active" == yes ]]; then
-    [[ "$active_state" == active ]] \
-      || die "$unit_name was active before migration but could not be restored."
-  else
-    [[ "$active_state" == inactive || "$active_state" == failed ]] \
-      || die "$unit_name was inactive before migration but became active."
-  fi
-  if [[ "$was_enabled" == yes ]]; then
-    [[ "$enablement_state" == enabled ]] \
-      || die "$unit_name was enabled before migration but could not be restored."
-  else
-    [[ "$enablement_state" != enabled ]] \
-      || die "$unit_name was disabled before migration but became enabled."
-  fi
 }

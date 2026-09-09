@@ -11,7 +11,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { bootstrap } from '../../src/state/bootstrap-service.js';
+import { bootstrap } from '../../src/state/bootstrap/service.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { temporary, privateFile, environment } from '../fixtures/bootstrap.js';
 

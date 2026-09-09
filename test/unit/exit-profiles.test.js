@@ -6,10 +6,11 @@ import {
   deriveExitUuid,
   exitProfileId,
   validateExitAddress,
-} from '../../src/core/exit-profiles.js';
-import { buildSubscriptionView } from '../../src/core/subscription-view.js';
-import { MAX_EXTRA_EXITS, validateState } from '../../src/core/state-schema.js';
-import { validateSubscriptionView } from '../../src/core/subscription-view.js';
+} from '../../src/core/identity/exit-profiles.js';
+import { buildSubscriptionView } from '../../src/core/subscriptions/view.js';
+import { MAX_EXTRA_EXITS } from '../../src/core/identity/exit-profiles.js';
+import { validateState } from '../../src/core/model/state.js';
+import { validateSubscriptionView } from '../../src/core/subscriptions/view.js';
 import { fixtureState } from '../fixtures/state.js';
 
 function stateWithExits() {
@@ -44,7 +45,7 @@ test('exit credentials are deterministic, separated by user and exit, and rotate
   assert.notEqual(password, deriveExitHealthPassword(Buffer.alloc(32, 8).toString('base64url'), seoul.id));
 });
 
-test('state accepts bounded private exit profiles without changing legacy state shape', () => {
+test('state accepts bounded private exit profiles without changing single-exit state shape', () => {
   assert.deepEqual(validateState(fixtureState()), fixtureState());
   assert.deepEqual(validateState(stateWithExits()), stateWithExits());
   assert.equal(validateExitAddress('FD7A:115C:A1E0:0:0:0:0:4'), 'fd7a:115c:a1e0::4');

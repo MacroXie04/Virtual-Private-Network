@@ -89,7 +89,7 @@ validate_cloudflare_ingress_settings() {
   normalized_output="$(
     env -i \
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-      "VALIDATION_MODULE=$REPO_DIR/src/core/validation.js" \
+      "VALIDATION_MODULE=$REPO_DIR/src/core/validation/ingress.js" \
       "VPN_PUBLIC_HOSTNAME=$VPN_PUBLIC_HOSTNAME" \
       "SUBSCRIPTION_PUBLIC_BASE_URL=$SUBSCRIPTION_PUBLIC_BASE_URL" \
       "ADMIN_PUBLIC_HOSTNAME=$ADMIN_PUBLIC_HOSTNAME" \
@@ -156,79 +156,68 @@ collect_cloudflare_ingress_settings() {
   validate_cloudflare_ingress_settings
 }
 
+assert_supported_data_directory() {
+  local inspection_root="$1"
+  local check_pointers="${2:-yes}"
+  env -i \
+    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "DATA_DIR=$inspection_root" \
+    "SUBSCRIPTION_GID=$(resolve_service_id group vpn-sub 11001 yes)" \
+    "CHECK_POINTERS=$check_pointers" \
+    "STATE_MODULE_ROOT=$REPO_DIR/src/state" \
+    "$NODE_BIN" --input-type=module --eval '
+      import { pathToFileURL } from "node:url";
+      const { assertSupportedDataDirectory } = await import(
+        pathToFileURL(process.env.STATE_MODULE_ROOT + "/bootstrap/recovery.js").href
+      );
+      await assertSupportedDataDirectory(process.env.DATA_DIR);
+      if (process.env.CHECK_POINTERS === "yes") {
+        const { RevisionRepository } = await import(
+          pathToFileURL(process.env.STATE_MODULE_ROOT + "/repository.js").href
+        );
+        const repository = new RevisionRepository(process.env.DATA_DIR, {
+          runtimeGid: 11000,
+          subscriptionGid: Number(process.env.SUBSCRIPTION_GID),
+        });
+        const current = await repository.readCurrent();
+        const runtimeId = await repository.readPointer("runtime");
+        if (current && runtimeId !== null && runtimeId !== current.id) {
+          await repository.assertSupportedRevisionSchema(runtimeId);
+        } else if (!current) {
+          const runtime = await repository.readRuntime();
+          if (runtime?.manifest.operation === "ingress.migrate") {
+            throw new Error("Uncommitted conversion data is unsupported; use a new data directory.");
+          }
+        }
+      }
+    '
+}
+
 inspect_current_state_for_installer() {
   env -i \
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "DATA_DIR=$STATE_ROOT" \
-    "STATE_SCHEMA_MODULE=$REPO_DIR/src/core/state-schema.js" \
+    "SUBSCRIPTION_GID=$(resolve_service_id group vpn-sub 11001 yes)" \
+    "REPOSITORY_MODULE=$REPO_DIR/src/state/repository.js" \
     "$NODE_BIN" --input-type=module --eval '
-      import { constants } from "node:fs";
-      import { lstat, open, readlink } from "node:fs/promises";
-      import path from "node:path";
       import { pathToFileURL } from "node:url";
-
-      const root = process.env.DATA_DIR;
-      let pointerPath;
-      for (const name of ["current", "runtime"]) {
-        const candidate = path.join(root, name);
-        try {
-          const pointer = await lstat(candidate);
-          if (!pointer.isSymbolicLink() || pointer.uid !== 0) throw new Error(name + " pointer is unsafe");
-          pointerPath = candidate;
-          break;
-        } catch (error) {
-          if (error.code !== "ENOENT") throw error;
-        }
-      }
-      if (!pointerPath) throw new Error("no current or runtime revision pointer exists");
-      const target = await readlink(pointerPath);
-      if (!/^revisions\/[0-9]{16}-[0-9a-f]{16}$/u.test(target)) {
-        throw new Error("revision pointer target is not canonical");
-      }
-      const revisionPath = path.join(root, target);
-      const revision = await lstat(revisionPath);
-      if (!revision.isDirectory() || revision.isSymbolicLink() || revision.uid !== 0 || (revision.mode & 0o777) !== 0o751) {
-        throw new Error("revision directory is unsafe");
-      }
-      const statePath = path.join(revisionPath, "state.json");
-      let handle;
-      try {
-        handle = await open(statePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-        const before = await handle.stat();
-        const pathname = await lstat(statePath);
-        if (!before.isFile() || before.uid !== 0 || before.gid !== 0 || before.nlink !== 1
-            || (before.mode & 0o777) !== 0o600 || before.size < 2 || before.size > 1024 * 1024
-            || pathname.isSymbolicLink() || pathname.dev !== before.dev || pathname.ino !== before.ino) {
-          throw new Error("state file is unsafe");
-        }
-        const bytes = await handle.readFile();
-        const after = await handle.stat();
-        const finalPathname = await lstat(statePath);
-        if (bytes.length !== before.size || after.dev !== before.dev || after.ino !== before.ino
-            || after.uid !== before.uid || after.gid !== before.gid || after.nlink !== before.nlink
-            || after.size !== before.size || (after.mode & 0o777) !== (before.mode & 0o777)
-            || finalPathname.isSymbolicLink() || finalPathname.dev !== before.dev
-            || finalPathname.ino !== before.ino) {
-          throw new Error("state file changed while it was read");
-        }
-        const state = JSON.parse(bytes.toString("utf8"));
-        if (state.schemaVersion === 2) {
-          process.stdout.write(JSON.stringify({ schemaVersion: 2 }));
-        } else {
-          const { validateState } = await import(pathToFileURL(process.env.STATE_SCHEMA_MODULE).href);
-          const validated = validateState(state);
-          process.stdout.write(JSON.stringify({
-            schemaVersion: validated.schemaVersion,
-            vpnPublicHostname: validated.gateway.vpnPublicHostname,
-            subscriptionPublicBaseUrl: validated.gateway.subscriptionPublicBaseUrl,
-            adminPublicHostname: validated.gateway.adminPublicHostname,
-            websocketPath: validated.gateway.websocketPath,
-            egressHealthHost: validated.health.target.host,
-          }));
-        }
-      } finally {
-        await handle?.close().catch(() => {});
-      }
+      const { RevisionRepository } = await import(pathToFileURL(process.env.REPOSITORY_MODULE).href);
+      const repository = new RevisionRepository(process.env.DATA_DIR, {
+        runtimeGid: 11000,
+        subscriptionGid: Number(process.env.SUBSCRIPTION_GID),
+      });
+      const current = await repository.readCurrent();
+      const revision = current ?? await repository.readRuntime();
+      if (!revision) throw new Error("no current or runtime revision pointer exists");
+      const state = revision.state;
+      process.stdout.write(JSON.stringify({
+        schemaVersion: state.schemaVersion,
+        vpnPublicHostname: state.gateway.vpnPublicHostname,
+        subscriptionPublicBaseUrl: state.gateway.subscriptionPublicBaseUrl,
+        adminPublicHostname: state.gateway.adminPublicHostname,
+        websocketPath: state.gateway.websocketPath,
+        egressHealthHost: state.health.target.host,
+      }));
     '
 }
 

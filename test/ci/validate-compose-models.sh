@@ -175,8 +175,6 @@ jq --exit-status --arg workspace "$GITHUB_WORKSPACE" '
     "DATA_DIR": "/data",
     "EGRESS_HEALTH_HOST": "health.example.net",
     "EXIT_NODE": "100.64.0.10",
-    "MIGRATE_LEGACY": "",
-    "MIGRATE_REALITY": "",
     "NODE_ENV": "production",
     "NODE_HOST": "127.0.0.1",
     "NODE_NAME": "vpn-ci",

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAdminServer } from '../../src/http/admin-application.js';
+import { createAdminServer } from '../../src/http/admin/application.js';
 
 import { request, cookieValue, encoded } from '../helpers/admin-http.js';
 

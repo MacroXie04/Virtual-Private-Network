@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSubscriptionServer } from '../../src/http/subscription-application.js';
+import { createSubscriptionServer } from '../../src/http/subscription/application.js';
 
 import { request, projection, tokenHash } from '../helpers/subscription-http.js';
 

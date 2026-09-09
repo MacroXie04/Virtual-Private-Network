@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Install service units, retire old listeners, and define origin verification.
+# Install managed service units and define origin verification.
 
 for unit_file in "${UNIT_FILES[@]}"; do
   install -o root -g root -m 0644 "$REPO_DIR/deploy/systemd/$unit_file" "$SYSTEMD_ROOT/$unit_file"
@@ -17,27 +17,6 @@ systemctl disable vpn-gateway-sing-box.service >/dev/null 2>&1 \
 gateway_singbox_enablement="$(query_upgrade_enablement vpn-gateway-sing-box.service yes)"
 [[ "$gateway_singbox_enablement" != enabled ]] \
   || die "vpn-gateway-sing-box.service remained enabled."
-
-disable_legacy_unit_if_present() {
-  local unit_name="$1"
-  local label="$2"
-  local active_state enablement_state
-  active_state="$(query_unit_active_state "$unit_name")"
-  enablement_state="$(query_upgrade_enablement "$unit_name" yes yes)"
-  if [[ "$active_state" == active || "$enablement_state" == enabled ]]; then
-    echo "==> Disabling $label"
-    systemctl disable --now "$unit_name"
-  fi
-  active_state="$(query_unit_active_state "$unit_name")"
-  enablement_state="$(query_upgrade_enablement "$unit_name" yes yes)"
-  [[ "$active_state" == inactive || "$active_state" == failed ]] \
-    || die "$unit_name remained active after disable."
-  [[ "$enablement_state" != enabled ]] \
-    || die "$unit_name remained enabled after disable."
-}
-
-disable_legacy_unit_if_present vpn-sub.service "the legacy subscription unit"
-disable_legacy_unit_if_present sing-box.service "the legacy sing-box unit to avoid a port conflict"
 
 verify_bare_loopback_origins() {
   env -i \

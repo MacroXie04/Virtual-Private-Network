@@ -1,5 +1,5 @@
-import { hashSubscriptionToken } from '../../src/core/credentials.js';
-import { exitProfileId } from '../../src/core/exit-profiles.js';
+import { hashSubscriptionToken } from '../../src/core/identity/credentials.js';
+import { exitProfileId } from '../../src/core/identity/exit-profiles.js';
 import { fixtureState, fixtureUser } from './state.js';
 
 export function lifecycleState() {

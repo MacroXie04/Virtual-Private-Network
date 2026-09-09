@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { classifyHost, formatAuthorityHost } from '../../src/core/validation/hosts.js';
+import { validateAbsoluteStatePath } from '../../src/core/validation/values.js';
 import {
-  classifyHost,
-  formatAuthorityHost,
-  validateAbsoluteStatePath,
   validatePublicDnsHostname,
   validateSubscriptionPublicBaseUrl,
   validateWebSocketPath,
-} from '../../src/core/validation.js';
-import { validateState } from '../../src/core/state-schema.js';
-import { validateSubscriptionView } from '../../src/core/subscription-view.js';
-import { buildSubscriptionView } from '../../src/core/subscription-view.js';
+} from '../../src/core/validation/ingress.js';
+import { validateState } from '../../src/core/model/state.js';
+import { validateSubscriptionView } from '../../src/core/subscriptions/view.js';
+import { buildSubscriptionView } from '../../src/core/subscriptions/view.js';
 import { fixtureState } from '../fixtures/state.js';
 
 test('public Tunnel settings accept only canonical dedicated DNS origins', () => {

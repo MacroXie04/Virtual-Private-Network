@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createSubscriptionServer } from '../../src/http/subscription-application.js';
+import { createSubscriptionServer } from '../../src/http/subscription/application.js';
 
-import { FixedWindowRateLimiter } from '../../src/http/rate-limit.js';
+import { FixedWindowRateLimiter } from '../../src/http/shared/rate-limit.js';
 
 import { request, projection, tokenHash } from '../helpers/subscription-http.js';
 

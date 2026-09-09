@@ -3,10 +3,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { GatewayController } from '../../src/control/controller.js';
-import { exitProfileId, deriveExitUuid } from '../../src/core/exit-profiles.js';
-import { buildRuntimeHealth } from '../../src/core/server-render.js';
-import { renderClientSubscription } from '../../src/core/client-subscriptions.js';
+import { GatewayController } from '../../src/control/authority/controller.js';
+import { exitProfileId, deriveExitUuid } from '../../src/core/identity/exit-profiles.js';
+import { buildRuntimeHealth } from '../../src/core/server/render.js';
+import { renderClientSubscription } from '../../src/core/subscriptions/clients.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { fixtureState } from '../fixtures/state.js';
 

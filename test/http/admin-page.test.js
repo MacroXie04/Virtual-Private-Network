@@ -1,13 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { exitProfileId } from '../../src/core/exit-profiles.js';
-import {
-  escapeHtml,
-  renderDashboardPage,
-  renderErrorPage,
-  renderLoginPage,
-  renderSecretPage,
-} from '../../src/http/admin-page.js';
+import { exitProfileId } from '../../src/core/identity/exit-profiles.js';
+import { escapeHtml } from '../../src/http/admin/pages/document.js';
+import { renderDashboardPage } from '../../src/http/admin/pages/dashboard.js';
+import { renderErrorPage, renderLoginPage, renderSecretPage } from '../../src/http/admin/pages/access.js';
 
 test('admin pages are script-free and escape all state values', () => {
   const page = renderDashboardPage({

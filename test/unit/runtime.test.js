@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import {
-  SupervisedSingBoxRuntime,
-  SystemdSingBoxRuntime,
-  validateSingBoxConfig,
-  waitForDataPath,
-} from '../../src/runtime/runtime.js';
+import { SupervisedSingBoxRuntime } from '../../src/runtime/sing-box/supervised.js';
+import { SystemdSingBoxRuntime } from '../../src/runtime/sing-box/systemd.js';
+import { validateSingBoxConfig } from '../../src/runtime/sing-box/config-check.js';
+import { waitForDataPath } from '../../src/runtime/health/readiness.js';
 
 test('config validation invokes a fixed executable without a shell and sanitizes failure', async () => {
   const calls = [];

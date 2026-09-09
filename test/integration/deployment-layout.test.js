@@ -50,7 +50,6 @@ test('container pins supported runtimes and Compose exposes origins only through
   assert.match(compose, /NODE_HOST: 127\.0\.0\.1/u);
   assert.match(compose, /SUB_HOST: 127\.0\.0\.1/u);
   assert.match(compose, /ADMIN_HOST: 127\.0\.0\.1/u);
-  assert.match(compose, /MIGRATE_REALITY: "\$\{MIGRATE_REALITY:-\}"/u);
   assert.doesNotMatch(compose, /ADMIN_ALLOWED_HOSTS|ADMIN_ALLOWED_ORIGINS/u);
   assert.match(compose, /network_mode: "service:vpn-gateway"/u);
   assert.match(compose, /condition: service_started/u);
@@ -99,7 +98,6 @@ test('container pins supported runtimes and Compose exposes origins only through
   assert.match(dockerignore, /!deploy\/docker\/cloudflared\.Dockerfile/u);
   assert.match(dockerignore, /!deploy\/docker\/cloudflared-guard\.go/u);
   assert.match(exampleEnvironment, /^CLOUDFLARE_TUNNEL_TOKEN_FILE=\/absolute\/path\/to\/cloudflare-tunnel-token$/mu);
-  assert.match(exampleEnvironment, /^MIGRATE_REALITY=$/mu);
   assert.doesNotMatch(exampleEnvironment, /(?:^|\n)TUNNEL_TOKEN=/u);
   assert.match(entrypoint, /canonical_revision_name/u);
   assert.match(entrypoint, /\$\{#canonical_revision_name\}" -eq 33/u);
@@ -132,8 +130,6 @@ test('Docker Compose renders with deterministic non-secret fixtures', async (t) 
       EGRESS_HEALTH_HOST: 'health.example.com',
       WS_PATH: '',
       NODE_NAME: 'vpn-test',
-      MIGRATE_LEGACY: '',
-      MIGRATE_REALITY: '',
     },
   });
 });

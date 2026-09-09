@@ -96,6 +96,9 @@ jobs:
             if (major !== 24 || minor < 20) process.exit(1);
           '
 
+      - name: Check source structure
+        run: npm run check:structure
+
       - name: Check JavaScript syntax
         run: |
           set -euo pipefail
@@ -150,8 +153,6 @@ jobs:
       EGRESS_HEALTH_HOST: health.example.net
       WS_PATH: /AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
       NODE_NAME: vpn-ci
-      MIGRATE_LEGACY: ''
-      MIGRATE_REALITY: ''
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,8 +209,6 @@ jobs:
       EGRESS_HEALTH_HOST: health.example.net
       WS_PATH: /AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
       NODE_NAME: vpn-ci
-      MIGRATE_LEGACY: ''
-      MIGRATE_REALITY: ''
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

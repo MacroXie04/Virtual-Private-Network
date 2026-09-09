@@ -46,11 +46,6 @@ for deployment_file in \
   "$TUNNEL_TOKEN_PATH"; do
   validate_fixed_file "$deployment_file"
 done
-for legacy_file in "$LEGACY_ENV_FILE" "$LEGACY_CONFIG_FILE" "$LEGACY_SUDOERS"; do
-  validate_fixed_file "$legacy_file"
-done
-validate_fixed_file "$MIGRATION_COMMITTED_MARKER"
-
 UPGRADE_RESTART_RECOVERY_REQUIRED=no
 if path_is_present "$UPGRADE_RESTART_JOURNAL"; then
   [[ -d "$UPGRADE_RESTART_JOURNAL" && ! -L "$UPGRADE_RESTART_JOURNAL" ]] \
@@ -71,10 +66,35 @@ if path_is_present "$UPGRADE_ROLLBACK_JOURNAL"; then
 fi
 readonly UPGRADE_ROLLBACK_RECOVERY_REQUIRED
 
-if [[ "$UPGRADE_RESTART_RECOVERY_REQUIRED" != yes \
-    && "$UPGRADE_ROLLBACK_RECOVERY_REQUIRED" != yes ]] \
-    && path_is_present "$MIGRATION_MARKER/committed"; then
-  promote_interrupted_migration_commit
+# Reject unsupported deployments without opening their configuration or changing
+# their services. This installer owns only the vpn-gateway service namespace.
+reject_retired_deployment() {
+  local retired_path retired_unit load_state
+  for retired_path in /etc/vpn-sub.env /etc/sing-box/config.json \
+    /var/lib/sing-box/tailscale /etc/sudoers.d/vpn-sub; do
+    if path_is_present "$retired_path"; then
+      die "Unsupported previous deployment at $retired_path. Preserve it and use a new data directory on a separate host or container for a fresh installation."
+    fi
+  done
+  for retired_unit in vpn-sub.service sing-box.service; do
+    load_state="$(LC_ALL=C systemctl show "$retired_unit" --property=LoadState --value)" \
+      || die "Could not safely inspect $retired_unit; no deployment services were changed."
+    [[ "$load_state" == not-found ]] \
+      || die "Existing $retired_unit is outside this installer service namespace. Preserve it and use a separate host or container with a new data directory."
+  done
+}
+
+reject_retired_deployment
+if [[ "$UPGRADE_RESTART_RECOVERY_REQUIRED" == yes \
+    || "$UPGRADE_ROLLBACK_RECOVERY_REQUIRED" == yes ]]; then
+  # Pending journal replay can own dangling or temporarily absent pointers.
+  # Validate its backup before any restoration; do not reinterpret these as a
+  # fresh deployment or inspect the incomplete live pointer set here.
+  assert_supported_data_directory "$STATE_ROOT" no \
+    || die "Unsupported or unsafe data directory. Preserve it and use a new data directory for a fresh installation."
+else
+  assert_supported_data_directory "$STATE_ROOT" \
+    || die "Unsupported or unsafe state. Preserve it and use a new data directory for a fresh installation."
 fi
 
 TUNNEL_TOKEN_RECOVERY_PENDING=no
@@ -103,63 +123,23 @@ if [[ "$UPGRADE_RESTART_RECOVERY_REQUIRED" != yes \
   CLOUDFLARED_DEPENDENCIES_VALIDATED=yes
 fi
 
-# Classify the host before changing legacy files or services. A partially
-# present v1 deployment is not safe to guess at, and v2 pointer recovery is
-# left to RevisionRepository rather than reinitializing over it.
+# Current revision recovery owns pointer loss; never initialize over old data.
 INSTALL_MODE=fresh
-MIGRATION_RESUME=no
-COMMITTED_MIGRATION_CLEANUP=no
 if [[ "$UPGRADE_RESTART_RECOVERY_REQUIRED" == yes \
     || "$UPGRADE_ROLLBACK_RECOVERY_REQUIRED" == yes ]]; then
-  # A prior rollback owns state reconciliation. Normal classification must not
-  # inspect potentially dangling pointers until that durable journal is replayed.
   INSTALL_MODE=existing
-elif path_is_present "$MIGRATION_COMMITTED_MARKER"; then
-  [[ "$(stat -c '%u:%a:%h' -- "$MIGRATION_COMMITTED_MARKER")" == 0:600:1 ]] \
-    || die "$MIGRATION_COMMITTED_MARKER must be root-owned mode 0600 with one link."
-  if ! path_is_present "$STATE_ROOT/current" && ! path_is_present "$STATE_ROOT/runtime"; then
-    die "$MIGRATION_COMMITTED_MARKER exists without a v2 revision pointer. Restore the state directory from backup before retrying."
-  fi
-  INSTALL_MODE=existing
-  if path_is_present "$MIGRATION_MARKER"; then
-    COMMITTED_MIGRATION_CLEANUP=yes
-  fi
-elif path_is_present "$MIGRATION_MARKER"; then
-  [[ -d "$MIGRATION_MARKER" && ! -L "$MIGRATION_MARKER" ]] \
-    || die "$MIGRATION_MARKER must be a directory, not a symlink."
-  [[ "$(stat -c '%u:%a' "$MIGRATION_MARKER")" == 0:700 ]] \
-    || die "$MIGRATION_MARKER must be owned by root with mode 0700."
-  if ! path_is_present "$LEGACY_ENV_FILE" || ! path_is_present "$LEGACY_CONFIG_FILE"; then
-    die "An interrupted migration requires both original legacy files. Restore $LEGACY_ENV_FILE and $LEGACY_CONFIG_FILE before retrying."
-  fi
-  [[ -f "$LEGACY_ENV_FILE" && ! -L "$LEGACY_ENV_FILE" ]] \
-    || die "$LEGACY_ENV_FILE must be a regular file, not a symlink."
-  [[ -f "$LEGACY_CONFIG_FILE" && ! -L "$LEGACY_CONFIG_FILE" ]] \
-    || die "$LEGACY_CONFIG_FILE must be a regular file, not a symlink."
-  INSTALL_MODE=migrate
-  MIGRATION_RESUME=yes
 elif path_is_present "$STATE_ROOT/current" || path_is_present "$STATE_ROOT/runtime"; then
   INSTALL_MODE=existing
-elif path_is_present "$LEGACY_ENV_FILE" || path_is_present "$LEGACY_CONFIG_FILE"; then
-  if ! path_is_present "$LEGACY_ENV_FILE" || ! path_is_present "$LEGACY_CONFIG_FILE"; then
-    die "Incomplete legacy deployment: both $LEGACY_ENV_FILE and $LEGACY_CONFIG_FILE are required. Restore the missing file from backup before retrying."
-  fi
-  [[ -f "$LEGACY_ENV_FILE" && ! -L "$LEGACY_ENV_FILE" ]] \
-    || die "$LEGACY_ENV_FILE must be a regular file, not a symlink."
-  [[ -f "$LEGACY_CONFIG_FILE" && ! -L "$LEGACY_CONFIG_FILE" ]] \
-    || die "$LEGACY_CONFIG_FILE must be a regular file, not a symlink."
-  INSTALL_MODE=migrate
 elif [[ -d "$STATE_ROOT/revisions" ]] \
     && [[ -n "$(find "$STATE_ROOT/revisions" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
   die "Revision files exist without a current or runtime pointer. Preserve $STATE_ROOT and restore a pointer from a verified backup before retrying."
 fi
-readonly INSTALL_MODE MIGRATION_RESUME
+readonly INSTALL_MODE
 
 # This fixed child is intentionally owned by the unprivileged runtime user, so
 # it cannot use the root-only fixed-directory validator above. Validate it
 # before user creation, service stops, or the later `install -d` call could
-# follow a planted symlink and change an unrelated directory. A root-owned
-# destination is accepted only while a legacy migration still owns the handoff.
+# follow a planted symlink and change an unrelated directory.
 if path_is_present "$STATE_ROOT/tailscale"; then
   [[ -d "$STATE_ROOT/tailscale" && ! -L "$STATE_ROOT/tailscale" ]] \
     || die "$STATE_ROOT/tailscale must be a real directory, not a symlink."
@@ -170,8 +150,7 @@ if path_is_present "$STATE_ROOT/tailscale"; then
     || die "$STATE_ROOT/tailscale has invalid directory permissions."
   (( (8#$tailscale_mode & 8#022) == 0 )) \
     || die "$STATE_ROOT/tailscale must not be writable by group or other users."
-  if [[ "$tailscale_owner" != 11000 ]] \
-      && [[ ! ( "$INSTALL_MODE" == migrate && "$tailscale_owner" == 0 ) ]]; then
+  if [[ "$tailscale_owner" != 11000 ]]; then
     die "$STATE_ROOT/tailscale must be owned by vpn-runtime uid 11000 before deployment."
   fi
 fi

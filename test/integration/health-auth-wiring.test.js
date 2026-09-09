@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createControllerApplication } from '../../src/control/application.js';
+import { createControllerApplication } from '../../src/control/app/application.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { fixtureState } from '../fixtures/state.js';
 

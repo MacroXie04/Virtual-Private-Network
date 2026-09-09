@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
+    "check:structure": "node test/ci/check-source-structure.js",
     "start": "node src/control/controller-server.js",
     "bootstrap": "node src/state/bootstrap.js",
     "healthcheck": "node src/runtime/healthcheck.js"

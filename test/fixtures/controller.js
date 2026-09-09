@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { lstat, mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { GatewayController } from '../../src/control/controller.js';
-import { ControllerSessions } from '../../src/control/controller-sessions.js';
-import { createAdminScryptRecord } from '../../src/core/credentials.js';
+import { GatewayController } from '../../src/control/authority/controller.js';
+import { ControllerSessions } from '../../src/control/authority/sessions.js';
+import { createAdminScryptRecord } from '../../src/core/identity/credentials.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 
 const UUIDS = [

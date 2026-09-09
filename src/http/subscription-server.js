@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
-import { createSubscriptionServer } from './subscription-application.js';
-import { installGracefulShutdown } from './http-service.js';
+import { createSubscriptionServer } from './subscription/application.js';
+import { installGracefulShutdown } from './shared/service.js';
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {

@@ -16,6 +16,8 @@ recover_interrupted_upgrade_restart() {
       && "$UPGRADE_ROLLBACK_RECOVERY_REQUIRED" != yes ]] || return 0
   echo "==> Recovering an upgrade interrupted before protected-state handoff"
   load_upgrade_restart_journal
+  assert_supported_data_directory "$STATE_ROOT" \
+    || die "Unsupported pre-handoff state; preserve it and use a new data directory."
   quiesce_upgrade_services_for_rollback
   cleanup_unjournaled_upgrade_restore_artifacts
   restore_upgrade_enablement

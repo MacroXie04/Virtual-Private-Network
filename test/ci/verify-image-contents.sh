@@ -42,7 +42,7 @@ docker export "$tunnel_id" | tar -tf - >"$RUNNER_TEMP/tunnel-files.txt"
 
 grep -Fx 'app/package.json' "$RUNNER_TEMP/gateway-files.txt"
 grep -Fx 'app/entrypoint.sh' "$RUNNER_TEMP/gateway-files.txt"
-grep -Fx 'app/src/core/server-render.js' "$RUNNER_TEMP/gateway-files.txt"
+grep -Fx 'app/src/core/server/render.js' "$RUNNER_TEMP/gateway-files.txt"
 grep -Fx 'usr/local/bin/sing-box' "$RUNNER_TEMP/gateway-files.txt"
 grep -Fx 'usr/local/bin/cloudflared' "$RUNNER_TEMP/tunnel-files.txt"
 grep -Fx 'usr/local/bin/cloudflared-guard' "$RUNNER_TEMP/tunnel-files.txt"
@@ -52,7 +52,7 @@ test "$(docker run --rm --entrypoint stat vpn-gateway:local \
 test "$(docker run --rm --entrypoint stat vpn-gateway:local \
   -c '%u:%g:%a:%h' /app/package.json)" = '0:0:644:1'
 test "$(docker run --rm --entrypoint stat vpn-gateway:local \
-  -c '%u:%g:%a:%h' /app/src/core/server-render.js)" = '0:0:644:1'
+  -c '%u:%g:%a:%h' /app/src/core/server/render.js)" = '0:0:644:1'
 test "$(docker run --rm --entrypoint stat vpn-gateway:local \
   -c '%u:%g:%a:%h' /usr/local/bin/sing-box)" = '0:0:755:1'
 

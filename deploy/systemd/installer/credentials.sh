@@ -127,31 +127,6 @@ create_fresh_controller_environment() {
   sync -f "$ENV_ROOT"
 }
 
-create_migration_controller_environment() {
-  local migration_state_directory="${1:-}"
-  local temporary_file
-
-  temporary_file="$(mktemp "$ENV_ROOT/.controller.env.XXXXXX")"
-  chmod 0600 "$temporary_file"
-  {
-    write_environment_value TS_AUTH_KEY_FILE "$AUTH_KEY_PATH"
-    write_environment_value LEGACY_ENV_FILE "$LEGACY_ENV_FILE"
-    write_environment_value LEGACY_CONFIG_FILE "$LEGACY_CONFIG_FILE"
-    if [[ -n "$migration_state_directory" ]]; then
-      write_environment_value MIGRATION_STATE_DIR "$migration_state_directory"
-    fi
-    write_environment_value VPN_PUBLIC_HOSTNAME "$VPN_PUBLIC_HOSTNAME"
-    write_environment_value SUBSCRIPTION_PUBLIC_BASE_URL "$SUBSCRIPTION_PUBLIC_BASE_URL"
-    write_environment_value ADMIN_PUBLIC_HOSTNAME "$ADMIN_PUBLIC_HOSTNAME"
-    write_environment_value WS_PATH "$WS_PATH"
-    write_environment_value EGRESS_HEALTH_HOST "$EGRESS_HEALTH_HOST"
-  } >"$temporary_file"
-  chown root:root "$temporary_file"
-  sync -f "$temporary_file"
-  mv -f -- "$temporary_file" "$CONTROLLER_ENV"
-  sync -f "$ENV_ROOT"
-}
-
 create_existing_controller_environment() {
   local temporary_file
   temporary_file="$(mktemp "$ENV_ROOT/.controller.env.XXXXXX")"
@@ -163,9 +138,6 @@ create_existing_controller_environment() {
     write_environment_value ADMIN_PUBLIC_HOSTNAME "$ADMIN_PUBLIC_HOSTNAME"
     write_environment_value WS_PATH "$WS_PATH"
     write_environment_value EGRESS_HEALTH_HOST "$EGRESS_HEALTH_HOST"
-    if [[ "$REALITY_MIGRATION_REQUIRED" == yes ]]; then
-      write_environment_value MIGRATE_REALITY 1
-    fi
   } >"$temporary_file"
   chown root:root "$temporary_file"
   sync -f "$temporary_file"

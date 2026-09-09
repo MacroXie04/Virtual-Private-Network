@@ -3,15 +3,7 @@
 
 restore_previous_deployment_on_failure() {
   local status=$?
-  local -a new_unit_names
   trap - EXIT
-  if [[ -n "$MIGRATION_MARKER_STAGING" ]]; then
-    case "$MIGRATION_MARKER_STAGING" in
-      "$STATE_ROOT"/.legacy-migration-marker.*)
-        rm -rf -- "$MIGRATION_MARKER_STAGING"
-        ;;
-    esac
-  fi
   if [[ -n "$SECRET_STAGING" ]]; then
     case "$SECRET_STAGING" in
       "$SECRET_ROOT"/.secret.??????)
@@ -19,13 +11,6 @@ restore_previous_deployment_on_failure() {
             && [[ "$(stat -c '%u:%a:%h' -- "$SECRET_STAGING")" == 0:600:1 ]]; then
           rm -f -- "$SECRET_STAGING"
         fi
-        ;;
-    esac
-  fi
-  if [[ -n "$MIGRATION_STAGING" ]]; then
-    case "$MIGRATION_STAGING" in
-      "$STATE_ROOT"/.tailscale-migrate.*)
-        rm -rf -- "$MIGRATION_STAGING"
         ;;
     esac
   fi
@@ -44,27 +29,6 @@ restore_previous_deployment_on_failure() {
     else
       die "Upgrade failed after shutdown without a durable recovery journal."
     fi
-  elif [[ $status -ne 0 && "$LEGACY_SERVICES_STOPPED" == yes && "$DEPLOYMENT_HANDOFF_COMPLETE" != yes ]]; then
-    echo "==> Migration did not complete; restoring the previously active legacy services" >&2
-    new_unit_names=(
-      vpn-gateway.target \
-      vpn-gateway-controller.service \
-      vpn-gateway-sing-box.service \
-      vpn-gateway-subscription.service \
-      vpn-gateway-admin.service
-    )
-    for service_name in "${new_unit_names[@]}"; do
-      # A failure can occur after the legacy units stop but before every new
-      # unit file is installed. Missing replacement units are therefore safe;
-      # any loaded or running unit must still stop conclusively.
-      stop_unit_if_active_strict "$service_name" yes
-    done
-    stop_unit_if_active_strict vpn-gateway-tunnel.service yes
-    hold_migration_target_disabled
-    restore_legacy_service_state \
-      sing-box.service "$LEGACY_SINGBOX_WAS_ACTIVE" "$LEGACY_SINGBOX_WAS_ENABLED"
-    restore_legacy_service_state \
-      vpn-sub.service "$LEGACY_SUB_WAS_ACTIVE" "$LEGACY_SUB_WAS_ENABLED"
   fi
   exit "$status"
 }
@@ -147,9 +111,7 @@ fi
 
 install -d -o root -g root -m 0755 "$INSTALL_ROOT" "$INSTALL_ROOT/src" "$INSTALL_ROOT/bin"
 install -d -o root -g root -m 0751 "$STATE_ROOT" "$STATE_ROOT/revisions"
-if [[ "$INSTALL_MODE" != migrate ]]; then
-  install -d -o vpn-runtime -g vpn-runtime -m 0700 "$STATE_ROOT/tailscale"
-fi
+install -d -o vpn-runtime -g vpn-runtime -m 0700 "$STATE_ROOT/tailscale"
 install -d -o root -g root -m 0700 "$ENV_ROOT"
 install -d -o root -g root -m 0700 "$SECRET_ROOT"
 cleanup_orphaned_secret_staging

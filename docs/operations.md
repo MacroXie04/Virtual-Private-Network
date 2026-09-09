@@ -44,13 +44,13 @@ Administrator additions, removals, and default-exit changes restart the data pla
 
 Health checks verify every configured exit, including its DNS path. If any exit fails, subscriptions return `503` until all remaining exits are healthy. The administration page continues to allow selecting a working default exit or removing failed additional exits during maintenance. When several exits are unavailable, remove them one at a time: each removal is saved while maintenance remains active, and readiness returns only when the remaining exits all pass their probes. There is no direct gateway egress fallback.
 
-## Upgrades, migration, and rollback
+## Upgrades and rollback
 
 Back up `/var/lib/vpn-gateway`, `/etc/vpn-gateway`, `/opt/vpn-gateway`, and the `vpn-gateway*` unit files as one stopped, access-controlled set. Never restore only pointers or selected revision files.
 
 The bare installer records service state, deployment files, the complete protected revision namespace, and atomic pointers before mutation. It holds boot enablement during the upgrade, automatically restores the previous deployment when readiness fails, and replays an interrupted rollback journal on the next run. The reported `/var/backups/vpn-gateway/upgrade-*` directory contains credentials: keep it root-only until the upgraded gateway is verified, then securely retire it after the rollback window.
 
-Migration from the existing REALITY schema is one-way and requires `MIGRATE_REALITY=1` together with the Tunnel token path and all five Cloudflare/health settings in the [deployment example](deployment.md#docker). It preserves users, UUIDs, token hashes, audit history, Exit Node selection, and Tailscale identity, but removes REALITY keys and creates a new WebSocket revision. Every old REALITY profile stops working; users must refresh or re-import subscriptions after commit. A legacy-v1 migration similarly requires those settings and `MIGRATE_LEGACY=1` after reviewing its dry run.
+This release supports fresh installations and upgrades of the current schema-v3 WebSocket gateway. Older configuration formats are unsupported and are never converted automatically. Use a separate, empty data directory or Docker volume for a fresh installation; preserve any old deployment data separately. Current-version upgrades retain the protected revision history, users and Tailscale state, with the backup and rollback safeguards described above.
 
 ## Verification
 

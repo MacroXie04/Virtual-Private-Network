@@ -27,5 +27,5 @@ Keep every secret outside this repository in a real, root-owned, singly linked f
 ## Guides
 
 - [Deployment](docs/deployment.md): configure the Named Tunnel, deploy with Docker or systemd, and establish the firewall boundary.
-- [Operations](docs/operations.md): administer users and subscriptions, upgrade or migrate, recover deployments, and verify production behavior.
+- [Operations](docs/operations.md): administer users and subscriptions, upgrade and recover current deployments, and verify production behavior.
 - [Development](docs/development.md): understand the repository layout, choose where new files belong, and run tests and CI checks.

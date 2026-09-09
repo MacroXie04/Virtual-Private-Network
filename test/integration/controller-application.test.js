@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createControlClient } from '../../src/control/control-client.js';
-import { createControllerApplication, runDataPathWatchdog } from '../../src/control/application.js';
-import { notifyServiceReady, spawnWebProcesses } from '../../src/control/web-processes.js';
+import { createControlClient } from '../../src/control/socket/client.js';
+import { createControllerApplication } from '../../src/control/app/application.js';
+import { runDataPathWatchdog } from '../../src/control/app/lifecycle.js';
+import { notifyServiceReady, spawnWebProcesses } from '../../src/control/app/web-processes.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { fixtureState } from '../fixtures/state.js';
 
@@ -87,8 +88,8 @@ test('supervised HTTP processes resolve existing entry files from the applicatio
   }
   await import(calls[0].args[0]);
   await import(calls[1].args[0]);
-  const subscription = await import('../../src/http/subscription-application.js');
-  const administration = await import('../../src/http/admin-application.js');
+  const subscription = await import('../../src/http/subscription/application.js');
+  const administration = await import('../../src/http/admin/application.js');
   assert.equal(typeof subscription.createSubscriptionServer, 'function');
   assert.equal(typeof administration.createAdminServer, 'function');
   assert.equal(calls[0].options.env.DATA_DIR, '/data');

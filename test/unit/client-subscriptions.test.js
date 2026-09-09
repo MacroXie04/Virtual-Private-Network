@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildRuntimeHealth, renderSingBoxConfig } from '../../src/core/server-render.js';
-import { buildSubscriptionView } from '../../src/core/subscription-view.js';
+import { buildRuntimeHealth, renderSingBoxConfig } from '../../src/core/server/render.js';
+import { buildSubscriptionView } from '../../src/core/subscriptions/view.js';
 import {
   renderClashClientConfig,
   renderClientSubscription,
@@ -10,7 +10,7 @@ import {
   renderSingBoxClientConfig,
   renderVlessLink,
   renderVlessLinks,
-} from '../../src/core/client-subscriptions.js';
+} from '../../src/core/subscriptions/clients.js';
 import { fixtureState, fixtureUser } from '../fixtures/state.js';
 
 import { lifecycleState, multipleExitState } from '../fixtures/render-state.js';
