@@ -13,7 +13,7 @@ WorkingDirectory=/opt/vpn-gateway
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/vpn-gateway/admin.env
-ExecStart=/usr/bin/env DATA_DIR=/var/lib/vpn-gateway CONTROLLER_SOCKET=/run/vpn-gateway/controller.sock ADMIN_HOST=127.0.0.1 ADMIN_PORT=8081 node /opt/vpn-gateway/src/http/admin-server.js
+ExecStart=/usr/bin/env DATA_DIR=/var/lib/vpn-gateway CONTROLLER_SOCKET=/run/vpn-gateway/controller.sock ADMIN_HOST=127.0.0.1 ADMIN_PORT=8081 SUB_PORT=8080 node /opt/vpn-gateway/src/http/admin-server.js
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=30s

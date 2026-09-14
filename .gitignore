@@ -12,3 +12,5 @@ backups/
 .DS_Store
 .tmp-test/
 .vpn-admin-tunnel/
+.claude/settings.local.json
+.idea/

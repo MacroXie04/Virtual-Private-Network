@@ -9,7 +9,7 @@ import {
   verifyAdminPassword,
   verifySubscriptionToken,
   validateSubscriptionToken,
-} from '../../src/core/credentials.js';
+} from '../../src/core/identity/credentials.js';
 
 test('subscription tokens use 256 random bits and persist only as fixed hashes', () => {
   const token = createSubscriptionToken({ randomBytesImpl: (size) => Buffer.alloc(size, 7) });

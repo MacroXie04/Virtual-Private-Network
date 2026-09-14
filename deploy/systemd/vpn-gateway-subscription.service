@@ -12,6 +12,7 @@ UMask=0077
 WorkingDirectory=/opt/vpn-gateway
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/vpn-gateway/admin.env
 ExecStart=/usr/bin/env DATA_DIR=/var/lib/vpn-gateway SUB_HOST=127.0.0.1 SUB_PORT=8080 node /opt/vpn-gateway/src/http/subscription-server.js
 Restart=on-failure
 RestartSec=2s

@@ -1,0 +1,13 @@
+# Explicit local-only access. Use with docker-compose.yml; the public
+# Cloudflare deployment does not load this file automatically.
+services:
+  vpn-gateway:
+    environment:
+      ADMIN_HOST: 0.0.0.0
+      LOCAL_HTTP_ORIGIN: http://127.0.0.1:8081
+    ports:
+      - "127.0.0.1:8081:8081"
+
+  cloudflared:
+    profiles:
+      - tunnel

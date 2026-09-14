@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "admin-site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/dev-server.mjs"],
+      "port": 18081,
+      "url": "http://127.0.0.1:18081"
+    }
+  ]
+}

@@ -26,8 +26,6 @@ services:
       DATA_DIR: /data
       CONTROLLER_SOCKET: /run/vpn-gateway/controller.sock
       SUPERVISE: "1"
-      MIGRATE_LEGACY: "${MIGRATE_LEGACY:-}"
-      MIGRATE_REALITY: "${MIGRATE_REALITY:-}"
       TS_AUTH_KEY_FILE: /run/secrets/tailscale-auth-key
       TS_API_KEY_FILE: "${TS_API_KEY_FILE:+/run/secrets/tailscale-api-key}"
       SINGBOX_BIN: /usr/local/bin/sing-box
@@ -46,8 +44,9 @@ services:
       ADMIN_HOST: 127.0.0.1
       ADMIN_PORT: "8081"
       VPN_PUBLIC_HOSTNAME: ${VPN_PUBLIC_HOSTNAME:?Set VPN_PUBLIC_HOSTNAME in .env}
-      SUBSCRIPTION_PUBLIC_BASE_URL: ${SUBSCRIPTION_PUBLIC_BASE_URL:?Set SUBSCRIPTION_PUBLIC_BASE_URL in .env}
+      SUBSCRIPTION_PUBLIC_BASE_URL: "${SUBSCRIPTION_PUBLIC_BASE_URL:-}"
       ADMIN_PUBLIC_HOSTNAME: ${ADMIN_PUBLIC_HOSTNAME:?Set ADMIN_PUBLIC_HOSTNAME in .env}
+      LOCAL_HTTP_ORIGIN: "${LOCAL_HTTP_ORIGIN:-}"
       WS_PATH: "${WS_PATH:-}"
       EGRESS_HEALTH_HOST: ${EGRESS_HEALTH_HOST:?Set EGRESS_HEALTH_HOST in .env}
       EXIT_NODE: ${EXIT_NODE:?Set EXIT_NODE in .env}
