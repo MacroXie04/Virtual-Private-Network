@@ -13,12 +13,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -mod=readonly \
       -trimpath \
-      -tags "with_gvisor,with_utls,with_tailscale" \
+      -tags "with_gvisor,with_utls,with_tailscale,with_v2ray_api" \
       -ldflags "-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version=1.13.21 -X internal/godebug.defaultGODEBUG=multipathtcp=0" \
       -o /out/sing-box github.com/sagernet/sing-box/cmd/sing-box \
     && go mod verify
-RUN /out/sing-box version | grep -Fx "sing-box version 1.13.21" \
-    && /out/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale"
+RUN /out/sing-box version && /out/sing-box version | grep -Fx "sing-box version 1.13.21" \
+    && /out/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale,with_v2ray_api"
 
 FROM node:24.20.0-alpine3.24@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
 
@@ -58,6 +58,7 @@ ENV NODE_ENV=production \
     SUB_PORT=8080 \
     ADMIN_HOST=127.0.0.1 \
     ADMIN_PORT=8081 \
+    LOCAL_HTTP_ORIGIN="" \
     SINGBOX_UID=11000 \
     SINGBOX_GID=11000 \
     SUB_UID=11001 \

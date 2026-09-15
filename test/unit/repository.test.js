@@ -20,7 +20,7 @@ import { RevisionRepository } from '../../src/state/repository.js';
 import { fixtureState } from '../fixtures/state.js';
 
 async function inTemporaryRepository(run) {
-  const parent = await mkdtemp(path.join(tmpdir(), 'vpn-core-v2-'));
+  const parent = await mkdtemp(path.join(tmpdir(), 'vpn-core-v3-'));
   const root = path.join(parent, 'data');
   try {
     await run({ parent, root, repository: new RevisionRepository(root) });
@@ -32,6 +32,16 @@ async function inTemporaryRepository(run) {
 function mode(stat) {
   return stat.mode & 0o777;
 }
+
+test('reading an absent repository does not create directories or state', async () => {
+  await inTemporaryRepository(async ({ root, repository }) => {
+    assert.equal(await repository.readCurrent(), null);
+    assert.equal(await repository.readRuntime(), null);
+    await assert.rejects(lstat(root), (error) => error.code === 'ENOENT');
+    await assert.rejects(repository.createRevision(fixtureState({ schemaVersion: 2 })));
+    await assert.rejects(lstat(root), (error) => error.code === 'ENOENT');
+  });
+});
 
 test('repository creates immutable, hashed revisions with least-privilege modes', async () => {
   await inTemporaryRepository(async ({ root, repository }) => {
@@ -245,6 +255,29 @@ test('repository recovery removes only safely shaped interrupted staging revisio
     await writeFile(path.join(unsafe, 'unexpected'), 'do not delete');
     await assert.rejects(repository.ensure(), (error) => error.code === 'UNSAFE_PATH');
     assert.equal((await lstat(path.join(unsafe, 'unexpected'))).isFile(), true);
+  });
+});
+
+test('retention refuses unsupported history before deletion or quota replacement', async () => {
+  await inTemporaryRepository(async ({ root }) => {
+    const repository = new RevisionRepository(root, { maxRevisions: 2 });
+    const current = await repository.initialize(fixtureState());
+    const old = await repository.createRevision(fixtureState({ revision: 2 }));
+    const statePath = path.join(old.path, 'state.json');
+    await writeFile(statePath, `${JSON.stringify({ ...fixtureState({ revision: 2 }), schemaVersion: 2 })}\n`);
+    const before = await readFile(statePath);
+    await assert.rejects(repository.removeRevision(old.id), (error) => error.code === 'UNSUPPORTED_SCHEMA');
+    await assert.rejects(repository.createRevision(fixtureState({ revision: 3 })),
+      (error) => error.code === 'UNSUPPORTED_SCHEMA');
+    assert.deepEqual(await readFile(statePath), before);
+    assert.equal(await repository.readPointer('current'), current.id);
+    assert.equal(await repository.readPointer('runtime'), current.id);
+    assert.equal((await repository.listRevisions()).length, 2);
+
+    // A damaged candidate with no known unsupported schema remains removable.
+    await writeFile(statePath, '{invalid JSON');
+    assert.equal(await repository.removeRevision(old.id), true);
+    assert.equal((await repository.listRevisions()).length, 1);
   });
 });
 

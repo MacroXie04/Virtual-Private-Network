@@ -6,13 +6,15 @@ import {
   enableUser,
   renameUser,
   revokeUser,
+} from '../../src/core/users/lifecycle.js';
+import {
   rotateSubscriptionToken,
   rotateUserCredentials,
   rotateUserUuid,
-} from '../../src/core/lifecycle.js';
-import { hashSubscriptionToken, verifySubscriptionToken } from '../../src/core/credentials.js';
+} from '../../src/core/users/credential-rotation.js';
+import { hashSubscriptionToken, verifySubscriptionToken } from '../../src/core/identity/credentials.js';
 import { fixtureState, fixtureUser } from '../fixtures/state.js';
-import { MAX_REVOKED_USERS, MAX_USER_RECORDS } from '../../src/core/state-schema.js';
+import { MAX_REVOKED_USERS, MAX_USER_RECORDS } from '../../src/core/model/policy.js';
 
 const T1 = '2026-09-04T00:01:00.000Z';
 const T2 = '2026-09-04T00:02:00.000Z';

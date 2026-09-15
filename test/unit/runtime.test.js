@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import {
-  SupervisedSingBoxRuntime,
-  SystemdSingBoxRuntime,
-  validateSingBoxConfig,
-  waitForDataPath,
-} from '../../src/runtime/runtime.js';
+import { SupervisedSingBoxRuntime } from '../../src/runtime/sing-box/supervised.js';
+import { SystemdSingBoxRuntime } from '../../src/runtime/sing-box/systemd.js';
+import { validateSingBoxConfig } from '../../src/runtime/sing-box/config-check.js';
+import { waitForDataPath } from '../../src/runtime/health/readiness.js';
 
 test('config validation invokes a fixed executable without a shell and sanitizes failure', async () => {
   const calls = [];
@@ -57,6 +55,35 @@ test('readiness retries the routed probe and eventually succeeds', async () => {
   });
   assert.equal(attempts, 3);
   assert.equal(websocketAttempts, 3);
+});
+
+test('readiness requires each published exit and keeps all probes within one deadline', async () => {
+  const profiles = [
+    { username: 'vpn-health', password: 'default-password' },
+    { username: 'vpn-health-extra', password: 'extra-password' },
+  ];
+  const health = {
+    listenPort: 19080, profiles, targetHost: 'health.example.net', targetPort: 443,
+    websocket: { connectHost: '127.0.0.1', connectPort: 8443, authority: 'vpn.example.com', path: `/${'A'.repeat(43)}` },
+  };
+  let time = 0;
+  const seen = [];
+  const options = {
+    websocketProbe: async () => {},
+    probe: async ({ username, password, timeoutMs }) => {
+      seen.push(username);
+      assert.equal(password, profiles.find((profile) => profile.username === username).password);
+      assert.ok(timeoutMs <= 20);
+      if (username === profiles[1].username) throw new Error('second exit is unavailable');
+    },
+    now: () => time,
+    wait: async (ms) => { time += ms; },
+    timeoutMs: 20, attemptTimeoutMs: 20, intervalMs: 10,
+  };
+  await assert.rejects(waitForDataPath(health, options), /data path did not become ready/u);
+  assert.equal(time, 20);
+  assert.deepEqual([...new Set(seen)], profiles.map((profile) => profile.username));
+  await waitForDataPath(health, { ...options, probe: async () => true });
 });
 
 test('supervised runtime restarts its exact child', async () => {

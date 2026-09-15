@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { classifyHost, formatAuthorityHost } from '../../src/core/validation/hosts.js';
+import { validateAbsoluteStatePath } from '../../src/core/validation/values.js';
 import {
-  classifyHost,
-  formatAuthorityHost,
-  validateAbsoluteStatePath,
   validatePublicDnsHostname,
   validateSubscriptionPublicBaseUrl,
   validateWebSocketPath,
-} from '../../src/core/validation.js';
-import { validateState, validateSubscriptionView } from '../../src/core/state-schema.js';
-import { buildSubscriptionView } from '../../src/core/render.js';
+} from '../../src/core/validation/ingress.js';
+import { validateState } from '../../src/core/model/state.js';
+import { validateSubscriptionView } from '../../src/core/subscriptions/view.js';
+import { buildSubscriptionView } from '../../src/core/subscriptions/view.js';
 import { fixtureState } from '../fixtures/state.js';
 
 test('public Tunnel settings accept only canonical dedicated DNS origins', () => {
@@ -30,6 +30,21 @@ test('public Tunnel settings accept only canonical dedicated DNS origins', () =>
   const collision = fixtureState();
   collision.gateway.adminPublicHostname = 'VPN.EXAMPLE.COM';
   assert.throws(() => validateState(collision), /must be distinct/u);
+  const subscriptionCollision = fixtureState();
+  subscriptionCollision.gateway.subscriptionPublicBaseUrl = 'https://VPN.EXAMPLE.COM';
+  assert.throws(() => validateState(subscriptionCollision), /must be distinct/u);
+});
+
+test('administration and subscription may share an origin without changing separate-origin state', () => {
+  const separate = fixtureState();
+  assert.deepEqual(validateState(separate).gateway, separate.gateway);
+  const shared = structuredClone(separate);
+  shared.gateway.subscriptionPublicBaseUrl = 'https://ADMIN.EXAMPLE.COM';
+  const normalized = validateState(shared);
+  assert.equal(normalized.gateway.subscriptionPublicBaseUrl, 'https://admin.example.com');
+  assert.equal(normalized.gateway.adminPublicHostname, 'admin.example.com');
+  assert.equal(buildSubscriptionView(normalized).gateway.subscriptionPublicHostname, 'admin.example.com');
+  assert.equal(buildSubscriptionView(separate).gateway.subscriptionPublicHostname, 'sub.example.com');
 });
 
 test('WebSocket paths are absolute, high-entropy-shaped, and canonical', () => {

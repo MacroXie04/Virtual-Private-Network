@@ -4,7 +4,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ControlError, createControlClient } from '../../src/control/control-client.js';
+import { ControlError } from '../../src/control/socket/client-transport.js';
+import { createControlClient } from '../../src/control/socket/client.js';
 
 async function controller(t, responder) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'vpn-control-test-'));
@@ -46,6 +47,52 @@ test('control client sends one allowlisted NDJSON envelope and returns result', 
   assert.equal(observed.expectedRevision, 7);
   assert.equal(observed.displayName, 'Alice');
   assert.match(observed.id, /^[0-9a-f-]{36}$/u);
+});
+
+test('control client forwards exit additions and removals with mutation authority', async (t) => {
+  const observed = [];
+  const socketPath = await controller(t, (request) => {
+    observed.push(request);
+    return { id: request.id, ok: true, result: { revision: request.expectedRevision + 1 } };
+  });
+  const client = createControlClient({ socketPath });
+  assert.deepEqual(await client.addExit('session', 'csrf-add', 7, 'tailscale-device'), { revision: 8 });
+  assert.deepEqual(await client.removeExit('session', 'csrf-remove', 8, '0123456789abcdef'), { revision: 9 });
+  assert.deepEqual(await client.renameUser('session', 'csrf-rename', 9, 'user-one', 'Alice Phone'), { revision: 10 });
+  assert.deepEqual(observed.map(({ id, ...request }) => request), [
+    { op: 'exit.add', sessionId: 'session', csrf: 'csrf-add', expectedRevision: 7, deviceId: 'tailscale-device' },
+    { op: 'exit.remove', sessionId: 'session', csrf: 'csrf-remove', expectedRevision: 8, exitId: '0123456789abcdef' },
+    { op: 'user.rename', sessionId: 'session', csrf: 'csrf-rename', expectedRevision: 9, userId: 'user-one', displayName: 'Alice Phone' },
+  ]);
+});
+
+test('control client forwards account and password operations without replay ids', async (t) => {
+  const observed = [];
+  const socketPath = await controller(t, (request) => {
+    observed.push(request);
+    return { id: request.id, ok: true, result: {} };
+  });
+  const client = createControlClient({ socketPath });
+  await client.resetUserPassword('session', 'csrf-reset', 3, 'user-one');
+  await client.accountLogin('Alice', 'portal-password');
+  await client.accountCheck('account-session');
+  await client.accountLogout('account-session', 'csrf-a');
+  await client.accountSnapshot('account-session');
+  await client.accountExport('account-session', 'clash');
+  await client.accountRotateToken('account-session', 'csrf-b');
+  await client.accountChangePassword('account-session', 'csrf-c', 'old-password', 'new-password');
+  assert.deepEqual(observed.map(({ id, ...request }) => request), [
+    { op: 'user.resetPassword', sessionId: 'session', csrf: 'csrf-reset', expectedRevision: 3, userId: 'user-one' },
+    { op: 'account.login', displayName: 'Alice', password: 'portal-password' },
+    { op: 'account.check', sessionId: 'account-session' },
+    { op: 'account.logout', sessionId: 'account-session', csrf: 'csrf-a' },
+    { op: 'account.snapshot', sessionId: 'account-session' },
+    { op: 'account.export', sessionId: 'account-session', format: 'clash' },
+    { op: 'account.rotateToken', sessionId: 'account-session', csrf: 'csrf-b' },
+    { op: 'account.changePassword', sessionId: 'account-session', csrf: 'csrf-c', currentPassword: 'old-password', newPassword: 'new-password' },
+  ]);
+  assert.ok(observed.every((request) => /^[0-9a-f-]{36}$/u.test(request.id)));
+  assert.equal(new Set(observed.map((request) => request.id)).size, observed.length);
 });
 
 test('control client rejects unknown operations and genericizes controller errors', async (t) => {

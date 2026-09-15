@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ControllerSessions } from '../../src/control/controller-sessions.js';
+import { ControllerSessions } from '../../src/control/authority/sessions.js';
 
 function deterministicRandom() {
   let value = 0;
@@ -99,4 +99,27 @@ test('a replay can be forgotten without affecting the session', () => {
     { status: 'miss' },
   );
   assert.equal(sessions.currentCsrf(issued.sessionId), issued.csrf);
+});
+
+test('sessions carry an optional subject and can be ended per subject', () => {
+  const sessions = new ControllerSessions({ randomBytes: deterministicRandom() });
+  const anonymous = sessions.issue();
+  assert.equal(sessions.get(anonymous.sessionId).session.subject, null);
+  const alicePhone = sessions.issue(1, 'alice');
+  const aliceLaptop = sessions.issue(1, 'alice');
+  const bob = sessions.issue(1, 'bob');
+  assert.equal(sessions.get(alicePhone.sessionId).session.subject, 'alice');
+  for (const subject of [42, '', 'x'.repeat(65), {}]) {
+    assert.throws(() => sessions.issue(1, subject), /session subject is invalid/u);
+  }
+
+  const kept = sessions.get(alicePhone.sessionId);
+  assert.equal(sessions.destroySubject('alice', kept.key), 1);
+  assert.ok(sessions.get(alicePhone.sessionId));
+  assert.equal(sessions.get(aliceLaptop.sessionId), null);
+  assert.ok(sessions.get(bob.sessionId));
+  assert.equal(sessions.destroySubject('alice'), 1);
+  assert.equal(sessions.get(alicePhone.sessionId), null);
+  assert.equal(sessions.destroySubject('nobody'), 0);
+  assert.ok(sessions.get(anonymous.sessionId));
 });

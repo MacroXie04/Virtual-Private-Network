@@ -5,13 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createControlClient } from '../../src/control/control-client.js';
-import {
-  createControllerApplication,
-  notifyServiceReady,
-  runDataPathWatchdog,
-  spawnWebProcesses,
-} from '../../src/control/controller-server.js';
+import { createControlClient } from '../../src/control/socket/client.js';
+import { createControllerApplication } from '../../src/control/app/application.js';
+import { runDataPathWatchdog } from '../../src/control/app/lifecycle.js';
+import { notifyServiceReady, spawnWebProcesses } from '../../src/control/app/web-processes.js';
 import { RevisionRepository } from '../../src/state/repository.js';
 import { fixtureState } from '../fixtures/state.js';
 
@@ -56,6 +53,8 @@ test('supervised HTTP processes resolve existing entry files from the applicatio
       DATA_DIR: '/data',
       CONTROLLER_SOCKET: '/run/vpn-gateway/controller.sock',
       ADMIN_PUBLIC_HOSTNAME: 'admin.example.com',
+      LOCAL_HTTP_ORIGIN: 'http://127.0.0.1:8081',
+      SUB_PORT: '8080',
       TS_AUTH_KEY_FILE: '/private/tailscale-key',
       CLOUDFLARE_TUNNEL_TOKEN_FILE: '/private/tunnel-token',
     },
@@ -89,11 +88,18 @@ test('supervised HTTP processes resolve existing entry files from the applicatio
     assert.equal(call.options.env.TS_AUTH_KEY_FILE, undefined);
     assert.equal(call.options.env.CLOUDFLARE_TUNNEL_TOKEN_FILE, undefined);
   }
-  const subscription = await import(calls[0].args[0]);
-  const administration = await import(calls[1].args[0]);
+  await import(calls[0].args[0]);
+  await import(calls[1].args[0]);
+  const subscription = await import('../../src/http/subscription/application.js');
+  const administration = await import('../../src/http/admin/application.js');
   assert.equal(typeof subscription.createSubscriptionServer, 'function');
   assert.equal(typeof administration.createAdminServer, 'function');
   assert.equal(calls[0].options.env.DATA_DIR, '/data');
+  assert.equal(calls[0].options.env.ADMIN_PUBLIC_HOSTNAME, 'admin.example.com');
+  assert.equal(calls[0].options.env.LOCAL_HTTP_ORIGIN, undefined);
+  assert.equal(calls[1].options.env.DATA_DIR, undefined);
+  assert.equal(calls[1].options.env.SUB_PORT, '8080');
+  assert.equal(calls[1].options.env.LOCAL_HTTP_ORIGIN, 'http://127.0.0.1:8081');
   assert.equal(calls[1].options.env.CONTROLLER_SOCKET, '/run/vpn-gateway/controller.sock');
   assert.equal(calls[1].options.env.ADMIN_PUBLIC_HOSTNAME, 'admin.example.com');
   await web.stop();
@@ -127,6 +133,7 @@ test('the recurring data-path watchdog makes every failed probe fail closed', as
     dispatch: async () => { throw new Error('data path failed'); },
     markUnready: () => events.push('unready'),
     setMaintenance: async (active) => events.push(`maintenance:${active}`),
+    collectUsage: async () => events.push('usage'),
   };
   assert.equal(await runDataPathWatchdog(authority), false);
   assert.deepEqual(events, ['unready', 'maintenance:true']);
@@ -138,7 +145,10 @@ test('the recurring data-path watchdog makes every failed probe fail closed', as
   );
 
   authority.dispatch = async () => ({ status: 'ok' });
+  events.length = 0;
   assert.equal(await runDataPathWatchdog(authority), true);
+  // Usage is only collected after a healthy probe, never on a failed one.
+  assert.deepEqual(events, ['usage']);
 });
 
 test('controller requires ADMIN_PUBLIC_HOSTNAME to match canonical state', async (t) => {
@@ -178,6 +188,7 @@ test('controller publishes its socket only after runtime recovery succeeds', asy
   const events = [];
   const authority = {
     sessions: { destroyAll: () => events.push('sessions.destroy') },
+    accountSessions: { destroyAll: () => events.push('accountSessions.destroy') },
     markUnready: () => events.push('unready'),
     recover: async () => { events.push('recover.begin'); await gate.promise; events.push('recover.end'); },
     dispatch: async () => ({ status: 'ok', revision: 1 }),
@@ -207,6 +218,8 @@ test('controller publishes its socket only after runtime recovery succeeds', asy
   await assert.rejects(lstat(fixture.socketPath), (error) => error.code === 'ENOENT');
   assert.deepEqual(events.slice(0, 2), ['recover.begin', 'recover.end']);
   assert.equal(events.includes('ready'), true);
+  // Both session realms are drained at shutdown, administrators first.
+  assert.deepEqual(events.filter((event) => event.endsWith('.destroy')), ['sessions.destroy', 'accountSessions.destroy']);
 });
 
 test('shutdown racing startup cannot publish a late socket', async (t) => {
