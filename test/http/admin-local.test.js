@@ -98,7 +98,12 @@ test('local login requires matching Host, Origin and CSRF and uses separate non-
   assertLocalCookie(login.headers['set-cookie'], 'vpn_admin_session_local');
   assertLocalCookie(login.headers['set-cookie'], 'vpn_admin_login_csrf_local');
   assert.equal(cookieValue(login.headers['set-cookie'], 'vpn_admin_session_local'), `vpn_admin_session_local=${SESSION}`);
-  assert.equal((await request(address, '/', {
+  // The root is public in local mode too, and the public cookie name means nothing there.
+  const home = await request(address, '/', { headers: { host: HOST, cookie: `__Host-vpn_admin_session=${SESSION}` } });
+  assert.equal(home.status, 200);
+  assert.equal(home.headers['set-cookie'], undefined);
+  assert.match(home.body, /href="\/overview"/u);
+  assert.equal((await request(address, '/overview', {
     headers: { host: HOST, cookie: `__Host-vpn_admin_session=${SESSION}` },
   })).status, 303);
   assert.equal(sessions, 0);
@@ -131,7 +136,7 @@ test('local dashboard and create or rotate responses share the local origin with
   t.after(() => service.close());
   const headers = { host: HOST, cookie: `vpn_admin_session_local=${SESSION}`, origin: ORIGIN,
     'content-type': 'application/x-www-form-urlencoded' };
-  const dashboard = await request(address, '/', { headers });
+  const dashboard = await request(address, '/overview', { headers });
   assert.equal(dashboard.status, 200);
   assert.ok(dashboard.body.includes(ORIGIN));
   assert.doesNotMatch(dashboard.body, /https:\/\/(?:admin|old-subscriptions)\.example\.com/u);

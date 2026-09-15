@@ -6,7 +6,7 @@ const ICON_WARN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="
 
 const BADGE_KINDS = new Set(['ok', 'warn', 'off', 'revoked']);
 const NAV_ITEMS = Object.freeze([
-  ['overview', '/', 'Overview'],
+  ['overview', '/overview', 'Overview'],
   ['exits', '/exit-nodes', 'Exit nodes'],
   ['users', '/users', 'Users'],
 ]);
@@ -58,10 +58,10 @@ ${content}
 </main>`;
 }
 
-/** Standalone centered frame for login, one-time credential and error pages. */
-export function authShell(content) {
+/** Standalone centered frame for login, one-time credential, error and home pages. */
+export function authShell(content, { wide = false } = {}) {
   return `<main class="auth-wrap">
-<div class="auth-inner">
+<div class="auth-inner${wide ? ' auth-inner-wide' : ''}">
 ${content}
 </div>
 </main>`;

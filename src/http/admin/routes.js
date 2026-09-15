@@ -9,8 +9,10 @@ import { createUserRoutes } from './user-routes.js';
 const IDENTIFIER = '[A-Za-z0-9_-]{1,128}';
 const USER_EXPORT_ROUTE = new RegExp(`^/users/(${IDENTIFIER})/export$`, 'u');
 const EXIT_REMOVE_ROUTE = /^\/exit-nodes\/([0-9a-f]{16})\/remove$/u;
+/** The only paths admitted to the administrator pipeline; the deployment guide scopes Cloudflare Access to them. */
+export const MANAGEMENT_PATHS = Object.freeze(['/login', '/logout', '/overview', '/users', '/exit-nodes', '/exit-node', '/public-base']);
 const PAGES = new Map([
-  ['/', renderOverviewPage],
+  ['/overview', renderOverviewPage],
   ['/exit-nodes', renderExitNodesPage],
   ['/users', renderUsersPage],
 ]);
@@ -121,7 +123,7 @@ export function createAdminRoutes({ control, mutationRateLimiter, access }) {
         exactForm(form, ['csrf', 'expectedRevision', 'url']);
         const rawUrl = valueOnce(form, 'url', { min: 9, max: 2048 });
         await control.setPublicBase(sessionId, csrf, expectedRevision, rawUrl);
-        redirect(req, res, '/');
+        redirect(req, res, '/overview');
         return;
       }
       sendGenericError(req, res, 404);

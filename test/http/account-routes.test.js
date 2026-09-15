@@ -81,7 +81,7 @@ test('the portal page shows the user\'s own connection details, usage and forms 
   assert.match(page.body, /action="\/account\/rotate-token"[\s\S]*?name="csrf" value="account-csrf"/u);
   assert.match(page.body, /action="\/account\/password"[\s\S]*?name="newPassword"[^>]*minlength="12"/u);
   assert.match(page.body, /action="\/account\/logout"/u);
-  assert.doesNotMatch(page.body, /href="\/users"|href="\/exit-nodes"|name="expectedRevision"|name="operationId"/u);
+  assert.doesNotMatch(page.body, /href="\/users"|href="\/exit-nodes"|href="\/"|name="expectedRevision"|name="operationId"/u);
   assert.deepEqual(calls, [['accountSnapshot', SESSION]]);
 
   const head = await request(address, '/account', { method: 'HEAD', headers });
@@ -240,6 +240,7 @@ test('account pages escape hostile values and contain no executable content', ()
   assert.doesNotMatch(login, /<script|<img\s/iu);
   assert.match(login, /value="&lt;img src=x onerror=alert\(1\)&gt;"/u);
   assert.match(login, /name="displayName"[^>]*aria-invalid="true"/u);
+  assert.doesNotMatch(login, /href="\/"/u);
   const page = renderAccountPage({
     csrf: 'csrf<&"', ready: true, user: { displayName: '<script>alert(1)</script>' }, usage: null,
     gateway: { vpnPublicHostname: '<gateway>', publicPort: 443 }, exits: [],
