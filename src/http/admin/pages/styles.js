@@ -127,6 +127,12 @@ input:user-invalid ~ .field-error { display: block; }
 .auth-card .alert { margin-top: 16px; text-align: left; }
 .auth-card form { display: grid; gap: 14px; margin-top: 20px; text-align: left; }
 .auth-card .field > span:not(.field-error) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.auth-inner-wide { max-width: 600px; display: grid; gap: 18px; }
+.auth-inner-wide > .meta { text-align: center; }
+.home-hero { text-align: center; padding: 28px 24px; }
+.home-hero .brand { font-size: 20px; }
+.home-hero .actions { justify-content: center; margin: 18px 0 0; }
+.steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; }
 .secret-list { margin: 0 0 16px; }
 .secret-list div { margin-bottom: 16px; }
 .secret-list dt { font-weight: 700; }

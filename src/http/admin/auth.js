@@ -105,7 +105,7 @@ export function createAdminAccess({ publicHostname, localHttpOrigin, control, gl
           return;
         }
         const result = await control.login(secret);
-        redirect(req, res, '/', {
+        redirect(req, res, '/overview', {
           'set-cookie': [issuedSessionCookie(result, sessionCookie, cookieOptions), clearLoginCsrf],
         });
       } catch (error) {

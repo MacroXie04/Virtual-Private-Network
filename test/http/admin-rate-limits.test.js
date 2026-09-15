@@ -95,7 +95,7 @@ test('credentialless traffic cannot exhaust per-session administration limits', 
   t.after(() => service.close());
 
   assert.equal((await request(address, '/login')).status, 200);
-  assert.equal((await request(address, '/', {
+  assert.equal((await request(address, '/overview', {
     headers: {
       cookie: '__Host-vpn_admin_session=session-one-long-enough',
       origin: 'https://hostile.test',
@@ -104,19 +104,19 @@ test('credentialless traffic cannot exhaust per-session administration limits', 
 
   for (let index = 0; index < 16; index += 1) {
     const fake = `fake-session-${String(index).padStart(3, '0')}-long-enough`;
-    assert.equal((await request(address, '/', {
+    assert.equal((await request(address, '/overview', {
       headers: { cookie: `__Host-vpn_admin_session=${fake}` },
     })).status, 303);
   }
 
-  const first = await request(address, '/', {
+  const first = await request(address, '/overview', {
     headers: { cookie: '__Host-vpn_admin_session=session-one-long-enough' },
   });
   assert.equal(first.status, 200);
-  assert.equal((await request(address, '/', {
+  assert.equal((await request(address, '/overview', {
     headers: { cookie: '__Host-vpn_admin_session=session-one-long-enough' },
   })).status, 429);
-  assert.equal((await request(address, '/', {
+  assert.equal((await request(address, '/overview', {
     headers: { cookie: '__Host-vpn_admin_session=session-two-long-enough' },
   })).status, 200);
   assert.equal(snapshotCalls, 2);
@@ -157,7 +157,8 @@ test('anonymous aggregate throttling cannot block a verified administration sess
 
   assert.equal((await request(address, '/login')).status, 200);
   assert.equal((await request(address, '/login')).status, 429);
-  assert.equal((await request(address, '/', {
+  assert.equal((await request(address, '/')).status, 429); // the home page spends the same anonymous bucket
+  assert.equal((await request(address, '/overview', {
     headers: { cookie: '__Host-vpn_admin_session=verified-session-long-enough' },
   })).status, 200);
 });
