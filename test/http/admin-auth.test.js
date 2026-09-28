@@ -54,7 +54,7 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
   t.after(() => service.close());
 
   assert.equal((await request(address, '/login', { headers: { host: 'evil.test' } })).status, 403);
-  assert.equal((await request(address, '/healthz')).status, 303);
+  assert.equal((await request(address, '/healthz')).status, 404);
   assert.equal(calls.length, 0);
   const loginPage = await request(address, '/login');
   assert.equal(loginPage.status, 200);
@@ -95,7 +95,7 @@ test('admin server enforces Host, Origin, login CSRF, session cookie, and mutati
     body: loginBody,
   });
   assert.equal(login.status, 303);
-  assert.equal(login.headers.location, '/');
+  assert.equal(login.headers.location, '/overview');
   const sessionCookie = cookieValue(login.headers['set-cookie'], '__Host-vpn_admin_session');
   assert.ok(sessionCookie);
   const sessionSetCookie = login.headers['set-cookie'].find((value) => value.startsWith('__Host-vpn_admin_session='));

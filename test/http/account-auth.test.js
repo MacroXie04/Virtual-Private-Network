@@ -53,7 +53,7 @@ test('account sign-in owns its cookies and never spends administrator limits or 
   const { page, csrfCookie, csrf } = await loginForm(address);
   assert.equal(page.status, 200);
   assert.match(page.body, /method="post" action="\/account\/login"/u);
-  assert.doesNotMatch(page.body, /<script/iu);
+  assert.doesNotMatch(page.body, /<script|href="\/"/iu);
   assert.match(page.headers['set-cookie'][0], /^__Host-vpn_account_login_csrf=[A-Za-z0-9_-]{43}; Path=\/; SameSite=Strict; HttpOnly; Secure$/u);
   const headers = { origin: 'https://admin.test', cookie: csrfCookie, 'content-type': 'application/x-www-form-urlencoded' };
   const post = (body, extra = {}) => request(address, '/account/login', { method: 'POST', headers: { ...headers, ...extra }, body });
@@ -109,6 +109,10 @@ test('the two realms ignore each other\'s cookies and only ever clear their own'
   assert.equal(portalOnAdmin.status, 303);
   assert.equal(portalOnAdmin.headers.location, '/login');
   assert.equal(portalOnAdmin.headers['set-cookie'], undefined);
+  const homeWithAccountCookie = await request(address, '/', { headers: { cookie: `__Host-vpn_account_session=${SESSION}` } });
+  assert.equal(homeWithAccountCookie.status, 200);
+  assert.equal(homeWithAccountCookie.headers['set-cookie'], undefined);
+  assert.match(homeWithAccountCookie.body, /href="\/account"/u);
   assert.equal(calls.length, 0);
 
   for (const pathname of ['/account', '/account/downloads/links', '/account/password-changed', '/account/nope']) {
@@ -130,7 +134,7 @@ test('the two realms ignore each other\'s cookies and only ever clear their own'
   const both = { cookie: `__Host-vpn_admin_session=${ADMIN_SESSION}; __Host-vpn_account_session=${SESSION}` };
   assert.equal((await request(address, '/account', { headers: both })).status, 200);
   assert.deepEqual(calls.at(-1), ['accountCheck', SESSION]);
-  assert.equal((await request(address, '/', { headers: both })).status, 200);
+  assert.equal((await request(address, '/overview', { headers: both })).status, 200);
   assert.deepEqual(calls.at(-1), ['checkSession', ADMIN_SESSION]);
 });
 

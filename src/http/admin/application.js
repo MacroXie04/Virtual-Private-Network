@@ -2,9 +2,10 @@ import { createControlClient } from '../../control/socket/client.js';
 import { FixedWindowRateLimiter } from '../shared/rate-limit.js';
 import { HttpError, parseOriginForm } from '../shared/input.js';
 import { createHttpService, sendGenericError, sendResponse, tooManyRequests } from '../shared/service.js';
-import { createAdminAccess, redirect } from './auth.js';
-import { createAdminRoutes } from './routes.js';
+import { createAdminAccess, html, redirect } from './auth.js';
+import { MANAGEMENT_PATHS, createAdminRoutes } from './routes.js';
 import { canonicalAdminAuthority, sessionFrom, sessionRateKey } from './request.js';
+import { renderHomePage } from './pages/access.js';
 import { ADMIN_STYLES, ADMIN_STYLES_PATH } from './pages/styles.js';
 import { createAdminSite } from './site.js';
 import { createSubscriptionProxy } from './subscriptions.js';
@@ -40,6 +41,8 @@ export function createAdminServer({
   }
   const access = createAdminAccess({ publicHostname, localHttpOrigin, control, globalRateLimiter, loginRateLimiter });
   const { allowUnauthenticated, verifyRequestSite, sendControllerError } = access;
+  // Rendered once from nothing: the public root can never carry a hostname, readiness or counts.
+  const homePage = renderHomePage();
   const routes = createAdminRoutes({ control, mutationRateLimiter, access });
   const subscriptions = createSubscriptionProxy({ publicHostname, port: subscriptionPort });
   const account = createAccountArea({
@@ -73,6 +76,13 @@ export function createAdminServer({
     }
     if (await access.handleLogin(req, res, url)) return;
 
+    // The site root is public for everyone: no cookie is read, nothing is cleared, the controller is never asked.
+    if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
+      if (!allowUnauthenticated(req, res)) return;
+      html(req, res, 200, homePage);
+      return;
+    }
+
     // Same-origin stylesheet required by every page, including both sign-in pages.
     if (url.pathname === ADMIN_STYLES_PATH && ['GET', 'HEAD'].includes(req.method)) {
       if (
@@ -81,6 +91,13 @@ export function createAdminServer({
         && !allowUnauthenticated(req, res)
       ) return;
       sendResponse(req, res, 200, ADMIN_STYLES, { 'content-type': 'text/css; charset=utf-8' });
+      return;
+    }
+
+    // Only management paths enter the administrator pipeline; anything else is answered before a cookie is read.
+    if (!MANAGEMENT_PATHS.some((base) => url.pathname === base || url.pathname.startsWith(`${base}/`))) {
+      if (!allowUnauthenticated(req, res)) return;
+      sendGenericError(req, res, 404);
       return;
     }
 

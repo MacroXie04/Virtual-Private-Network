@@ -112,11 +112,12 @@ test('portal rejects wrong subscription Host without accepting forwarded authori
 
 test('management paths still require administrator login on the unified portal', async (t) => {
   const { address, calls, seen } = await portal(t, { guardAdminBuckets: false });
-  for (const pathname of ['/', '/exit-nodes', '/users', '/healthz', '/users/alice/export']) {
+  for (const pathname of ['/overview', '/exit-nodes', '/users', '/users/alice/export']) {
     const response = await request(address, pathname, { headers: { host: PUBLIC_HOST } });
     assert.equal(response.status, 303);
     assert.equal(response.headers.location, '/login');
   }
+  assert.equal((await request(address, '/healthz', { headers: { host: PUBLIC_HOST } })).status, 404);
   for (const pathname of ['/account', '/account/downloads/links', '/account/password-changed']) {
     const response = await request(address, pathname, { headers: { host: PUBLIC_HOST } });
     assert.equal(response.status, 303);
@@ -132,6 +133,15 @@ test('management paths still require administrator login on the unified portal',
   assert.ok(cookieValue(login.headers['set-cookie'], '__Host-vpn_admin_login_csrf'));
   assert.match(login.headers['set-cookie'][0], /; Secure/u);
   assert.equal((await request(address, '/login', { headers: { host: 'other.example.com' } })).status, 403);
+  assert.equal(seen.length, 0);
+  assert.deepEqual(calls.controller, []);
+});
+
+test('the site root is a public home page that never reaches the controller or the subscription worker', async (t) => {
+  const { address, calls, seen } = await portal(t, { guardAdminBuckets: false });
+  const home = await request(address, '/', { headers: { host: PUBLIC_HOST } });
+  assert.equal(home.status, 200);
+  assert.match(home.body, /href="\/account"/u);
   assert.equal(seen.length, 0);
   assert.deepEqual(calls.controller, []);
 });

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { exitProfileId } from '../../src/core/identity/exit-profiles.js';
 import { escapeHtml } from '../../src/http/admin/pages/document.js';
 import { renderExitNodesPage, renderOverviewPage, renderUsersPage } from '../../src/http/admin/pages/dashboard.js';
-import { renderErrorPage, renderLoginPage } from '../../src/http/admin/pages/access.js';
+import { renderErrorPage, renderHomePage, renderLoginPage } from '../../src/http/admin/pages/access.js';
 import { renderCredentialsCard } from '../../src/http/admin/pages/users.js';
 
 const renderAll = (snapshot, options) => [
@@ -40,10 +40,29 @@ test('admin pages are script-free and escape all state values', () => {
   assert.equal(escapeHtml(`<&>"'`), '&lt;&amp;&gt;&quot;&#39;');
 });
 
+test('the public home page is constant, script-free and links only to the two realms', () => {
+  const home = renderHomePage();
+  assert.match(renderHomePage.toString(), /^function renderHomePage\(\)\s*\{/u);
+  assert.equal(home, renderHomePage());
+  assert.match(home, /<html lang="en">/u);
+  assert.match(home, /<meta name="robots" content="noindex, nofollow">/u);
+  assert.match(home, /<link rel="stylesheet" href="\/assets\/admin\.css">/u);
+  assert.match(home, /<title>VPN Gateway<\/title>/u);
+  assert.match(home, /<div class="auth-inner auth-inner-wide">/u);
+  assert.match(home, /<h1 id="home-title" class="brand">/u);
+  assert.match(home, /<a class="btn btn-primary btn-block" href="\/account">Sign in to your account<\/a>/u);
+  assert.match(home, /aria-labelledby="connect-title"[\s\S]*<ol class="steps">[\s\S]*aria-labelledby="help-title"/u);
+  assert.match(home, /subscription link your administrator gave you/u);
+  assert.match(home, /<p class="meta"><a href="\/overview">Administration<\/a><\/p>/u);
+  assert.deepEqual([...home.matchAll(/href="([^"]*)"/gu)].map((match) => match[1]), ['/assets/admin.css', '/account', '/overview']);
+  assert.doesNotMatch(home, /<script|<form|<img|name="csrf"|name="expectedRevision"|name="operationId"|aria-current|vless:\/\/|Gateway overview|Sign out|Maintenance mode/iu);
+});
+
 test('login and one-time credential pages do not contain executable content', () => {
   const login = renderLoginPage({ csrf: 'csrf-token' });
   assert.match(login, /method="post" action="\/login"/u);
   assert.doesNotMatch(login, /<script/iu);
+  assert.match(login, /<a href="\/">Home<\/a> · <a href="\/account\/login">User sign-in<\/a>/u);
 
   const secret = renderCredentialsCard({
     rawToken: '<raw-token>',
@@ -231,10 +250,10 @@ test('each administration page owns one section and marks itself in the navigati
   const overview = renderOverviewPage(snapshot);
   const exits = renderExitNodesPage(snapshot);
   const users = renderUsersPage(snapshot);
-  for (const [page, href] of [[overview, '/'], [exits, '/exit-nodes'], [users, '/users']]) {
+  for (const [page, href] of [[overview, '/overview'], [exits, '/exit-nodes'], [users, '/users']]) {
     assert.match(page, new RegExp(`<a href="${href}" aria-current="page">`, 'u'));
     assert.equal([...page.matchAll(/aria-current="page"/gu)].length, 1);
-    assert.match(page, /<a href="\/"[^>]*>Overview<\/a>[\s\S]*<a href="\/exit-nodes"[^>]*>Exit nodes<\/a>[\s\S]*<a href="\/users"[^>]*>Users<\/a>/u);
+    assert.match(page, /<a href="\/overview"[^>]*>Overview<\/a>[\s\S]*<a href="\/exit-nodes"[^>]*>Exit nodes<\/a>[\s\S]*<a href="\/users"[^>]*>Users<\/a>/u);
   }
   assert.match(overview, /<title>Overview · VPN Gateway Admin<\/title>[\s\S]*Gateway overview/u);
   assert.doesNotMatch(overview, /action="\/users"|Default exit node|user-one/u);
