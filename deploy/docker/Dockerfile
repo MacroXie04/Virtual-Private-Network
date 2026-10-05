@@ -2,7 +2,7 @@
 
 # Keep the sing-box release and build tags stable while locking security fixes
 # for its transitive dependencies in a separate build module.
-FROM golang:1.26.7-alpine3.24@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS sing-box-build
+FROM golang:1.27.1-alpine3.24@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS sing-box-build
 
 ENV GOPROXY=https://proxy.golang.org \
     GOSUMDB=sum.golang.org \
@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN /out/sing-box version && /out/sing-box version | grep -Fx "sing-box version 1.13.21" \
     && /out/sing-box version | grep -Fx "Tags: with_gvisor,with_utls,with_tailscale,with_v2ray_api"
 
-FROM node:24.20.0-alpine3.24@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
 
 ADD --checksum=sha256:9f58bff01604cb1b14008fef14dceb14d836a49225e45c6c2e37de3be3e707f0 \
   https://registry.npmjs.org/npm/-/npm-11.19.1.tgz /tmp/npm-11.19.1.tgz
